@@ -1,0 +1,447 @@
+{
+  "generated_at": "2026-09-06T12:05:42.841658+00:00",
+  "method_name": "curated_validated_native_openalex_topics",
+  "method_version": "1.1",
+  "methodological_validation": {
+    "sample_size": 300,
+    "clear_ai": 295,
+    "ambiguous": 2,
+    "false_positive": 3,
+    "strict_precision": 0.9833,
+    "broad_precision": 0.99,
+    "strict_precision_2018_2021": 0.9667,
+    "strict_precision_2022_2025": 1.0
+  },
+  "population_total": 283851,
+  "population_by_year": {
+    "2018": 18740,
+    "2019": 23398,
+    "2020": 28097,
+    "2021": 33675,
+    "2022": 32576,
+    "2023": 45671,
+    "2024": 40873,
+    "2025": 60821
+  },
+  "target_sample_size": 24000,
+  "actual_sample_size": 24000,
+  "unique_work_ids": 24000,
+  "duplicates": 0,
+  "duplicates_removed_during_extraction": 0,
+  "guardrail_failures": 0,
+  "expected_by_year": {
+    "2018": 1584,
+    "2019": 1978,
+    "2020": 2376,
+    "2021": 2847,
+    "2022": 2754,
+    "2023": 3862,
+    "2024": 3456,
+    "2025": 5143
+  },
+  "actual_by_year": {
+    "2018": 1584,
+    "2019": 1978,
+    "2020": 2376,
+    "2021": 2847,
+    "2022": 2754,
+    "2023": 3862,
+    "2024": 3456,
+    "2025": 5143
+  },
+  "sampling_representativeness": {
+    "2018": {
+      "population_share": 0.06602055303662838,
+      "sample_share": 0.066,
+      "absolute_share_difference": 2.055303662837349e-05
+    },
+    "2019": {
+      "population_share": 0.08243057096857154,
+      "sample_share": 0.08241666666666667,
+      "absolute_share_difference": 1.3904301904871241e-05
+    },
+    "2020": {
+      "population_share": 0.0989850308788766,
+      "sample_share": 0.099,
+      "absolute_share_difference": 1.4969121123406537e-05
+    },
+    "2021": {
+      "population_share": 0.11863618588625723,
+      "sample_share": 0.118625,
+      "absolute_share_difference": 1.1185886257231159e-05
+    },
+    "2022": {
+      "population_share": 0.11476443627114226,
+      "sample_share": 0.11475,
+      "absolute_share_difference": 1.4436271142254098e-05
+    },
+    "2023": {
+      "population_share": 0.16089779496989617,
+      "sample_share": 0.16091666666666668,
+      "absolute_share_difference": 1.887169677050604e-05
+    },
+    "2024": {
+      "population_share": 0.1439945605264734,
+      "sample_share": 0.144,
+      "absolute_share_difference": 5.439473526602789e-06
+    },
+    "2025": {
+      "population_share": 0.21427086746215443,
+      "sample_share": 0.21429166666666666,
+      "absolute_share_difference": 2.0799204512228497e-05
+    }
+  },
+  "missing_doi": 1291,
+  "missing_primary_topic": 0,
+  "missing_country": 7938,
+  "missing_institution": 7934,
+  "missing_source": 7372,
+  "work_type_distribution": {
+    "article": 5719,
+    "book": 29,
+    "book-chapter": 528,
+    "conference-paper": 10216,
+    "preprint": 7461,
+    "review": 47
+  },
+  "top_primary_topics": [
+    {
+      "id": "T10028",
+      "display_name": "Topic Modeling",
+      "count": 8113
+    },
+    {
+      "id": "T10181",
+      "display_name": "Natural Language Processing Techniques",
+      "count": 3191
+    },
+    {
+      "id": "T11714",
+      "display_name": "Multimodal Machine Learning Applications",
+      "count": 2767
+    },
+    {
+      "id": "T11307",
+      "display_name": "Domain Adaptation and Few-Shot Learning",
+      "count": 1069
+    },
+    {
+      "id": "T10664",
+      "display_name": "Sentiment Analysis and Opinion Mining",
+      "count": 749
+    },
+    {
+      "id": "T11273",
+      "display_name": "Advanced Graph Neural Networks",
+      "count": 705
+    },
+    {
+      "id": "T10203",
+      "display_name": "Recommender Systems and Techniques",
+      "count": 531
+    },
+    {
+      "id": "T10812",
+      "display_name": "Human Pose and Action Recognition",
+      "count": 380
+    },
+    {
+      "id": "T10627",
+      "display_name": "Advanced Image and Video Retrieval Techniques",
+      "count": 376
+    },
+    {
+      "id": "T10036",
+      "display_name": "Advanced Neural Network Applications",
+      "count": 305
+    },
+    {
+      "id": "T13083",
+      "display_name": "Advanced Text Analysis Techniques",
+      "count": 295
+    },
+    {
+      "id": "T11710",
+      "display_name": "Biomedical Text Mining and Ontologies",
+      "count": 294
+    },
+    {
+      "id": "T12031",
+      "display_name": "Speech and dialogue systems",
+      "count": 260
+    },
+    {
+      "id": "T10201",
+      "display_name": "Speech Recognition and Synthesis",
+      "count": 242
+    },
+    {
+      "id": "T13702",
+      "display_name": "Machine Learning in Healthcare",
+      "count": 235
+    },
+    {
+      "id": "T11147",
+      "display_name": "Misinformation and Its Impacts",
+      "count": 225
+    },
+    {
+      "id": "T12026",
+      "display_name": "Explainable Artificial Intelligence (XAI)",
+      "count": 216
+    },
+    {
+      "id": "T10775",
+      "display_name": "Generative Adversarial Networks and Image Synthesis",
+      "count": 205
+    },
+    {
+      "id": "T11636",
+      "display_name": "Artificial Intelligence in Healthcare and Education",
+      "count": 197
+    },
+    {
+      "id": "T10260",
+      "display_name": "Software Engineering Research",
+      "count": 178
+    }
+  ],
+  "top_subfields": [
+    {
+      "id": "1702",
+      "display_name": "Artificial Intelligence",
+      "count": 21590
+    },
+    {
+      "id": "1707",
+      "display_name": "Computer Vision and Pattern Recognition",
+      "count": 8160
+    },
+    {
+      "id": "1710",
+      "display_name": "Information Systems",
+      "count": 2500
+    },
+    {
+      "id": "1312",
+      "display_name": "Molecular Biology",
+      "count": 1106
+    },
+    {
+      "id": "1803",
+      "display_name": "Management Science and Operations Research",
+      "count": 774
+    },
+    {
+      "id": "2718",
+      "display_name": "Health Informatics",
+      "count": 525
+    },
+    {
+      "id": "3312",
+      "display_name": "Sociology and Political Science",
+      "count": 451
+    },
+    {
+      "id": "3300",
+      "display_name": "General Social Sciences",
+      "count": 444
+    },
+    {
+      "id": "3207",
+      "display_name": "Social Psychology",
+      "count": 327
+    },
+    {
+      "id": "2741",
+      "display_name": "Radiology, Nuclear Medicine and Imaging",
+      "count": 324
+    },
+    {
+      "id": "2207",
+      "display_name": "Control and Systems Engineering",
+      "count": 245
+    },
+    {
+      "id": "1711",
+      "display_name": "Signal Processing",
+      "count": 234
+    },
+    {
+      "id": "1706",
+      "display_name": "Computer Science Applications",
+      "count": 189
+    },
+    {
+      "id": "1203",
+      "display_name": "Language and Linguistics",
+      "count": 181
+    },
+    {
+      "id": "3320",
+      "display_name": "Political Science and International Relations",
+      "count": 167
+    },
+    {
+      "id": "3109",
+      "display_name": "Statistical and Nonlinear Physics",
+      "count": 163
+    },
+    {
+      "id": "2505",
+      "display_name": "Materials Chemistry",
+      "count": 156
+    },
+    {
+      "id": "3205",
+      "display_name": "Experimental and Cognitive Psychology",
+      "count": 149
+    },
+    {
+      "id": "2202",
+      "display_name": "Aerospace Engineering",
+      "count": 144
+    },
+    {
+      "id": "2805",
+      "display_name": "Cognitive Neuroscience",
+      "count": 137
+    }
+  ],
+  "top_fields": [
+    {
+      "id": "17",
+      "display_name": "Computer Science",
+      "count": 24000
+    },
+    {
+      "id": "33",
+      "display_name": "Social Sciences",
+      "count": 1445
+    },
+    {
+      "id": "13",
+      "display_name": "Biochemistry, Genetics and Molecular Biology",
+      "count": 1234
+    },
+    {
+      "id": "27",
+      "display_name": "Medicine",
+      "count": 939
+    },
+    {
+      "id": "18",
+      "display_name": "Decision Sciences",
+      "count": 910
+    },
+    {
+      "id": "22",
+      "display_name": "Engineering",
+      "count": 612
+    },
+    {
+      "id": "32",
+      "display_name": "Psychology",
+      "count": 556
+    },
+    {
+      "id": "12",
+      "display_name": "Arts and Humanities",
+      "count": 258
+    },
+    {
+      "id": "31",
+      "display_name": "Physics and Astronomy",
+      "count": 175
+    },
+    {
+      "id": "25",
+      "display_name": "Materials Science",
+      "count": 156
+    },
+    {
+      "id": "28",
+      "display_name": "Neuroscience",
+      "count": 145
+    },
+    {
+      "id": "36",
+      "display_name": "Health Professions",
+      "count": 144
+    },
+    {
+      "id": "14",
+      "display_name": "Business, Management and Accounting",
+      "count": 38
+    },
+    {
+      "id": "26",
+      "display_name": "Mathematics",
+      "count": 20
+    },
+    {
+      "id": "19",
+      "display_name": "Earth and Planetary Sciences",
+      "count": 14
+    },
+    {
+      "id": "20",
+      "display_name": "Economics, Econometrics and Finance",
+      "count": 11
+    },
+    {
+      "id": "30",
+      "display_name": "Pharmacology, Toxicology and Pharmaceutics",
+      "count": 10
+    },
+    {
+      "id": "23",
+      "display_name": "Environmental Science",
+      "count": 9
+    },
+    {
+      "id": "11",
+      "display_name": "Agricultural and Biological Sciences",
+      "count": 6
+    },
+    {
+      "id": "29",
+      "display_name": "Nursing",
+      "count": 4
+    }
+  ],
+  "top_domains": [
+    {
+      "id": "3",
+      "display_name": "Physical Sciences",
+      "count": 24000
+    },
+    {
+      "id": "2",
+      "display_name": "Social Sciences",
+      "count": 3129
+    },
+    {
+      "id": "1",
+      "display_name": "Life Sciences",
+      "count": 1389
+    },
+    {
+      "id": "4",
+      "display_name": "Health Sciences",
+      "count": 1083
+    }
+  ],
+  "sanity_sample": {
+    "seed": 2026090699,
+    "sample_size": 100,
+    "unique_ids": 100,
+    "all_have_topics": true,
+    "all_have_selected_topic": true,
+    "all_years_in_scope": true,
+    "all_types_allowed": true,
+    "none_explicitly_retracted": true,
+    "errors": [],
+    "passed": true
+  }
+}

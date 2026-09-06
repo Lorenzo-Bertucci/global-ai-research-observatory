@@ -1,0 +1,82 @@
+{
+  "version": "1.1",
+  "status": "frozen",
+  "method": "curated_validated_native_openalex_topics",
+  "validated_at": "2026-09-05",
+  "topic_precision_gate": 0.9,
+  "revision_note": "After the final validation, five topics below the 90% precision threshold were removed: T10883, T11512, T11636, T11689 and T12026.",
+  "topics": [
+    {
+      "id": "T10028",
+      "display_name": "Topic Modeling",
+      "description": "This cluster of papers covers a wide range of advancements in natural language processing, including neural network architectures, word representation models, machine translation techniques, text classification algorithms, semantic similarity measures, named entity recognition methods, pretrained language models, sequence-to-sequence learning approaches, topic modeling strategies, and information retrieval systems.",
+      "works_count_at_validation": 170533,
+      "subfield": {
+        "id": "1702",
+        "display_name": "Artificial Intelligence"
+      },
+      "field": {
+        "id": "17",
+        "display_name": "Computer Science"
+      },
+      "domain": {
+        "id": "3",
+        "display_name": "Physical Sciences"
+      },
+      "reason": "NLP and machine learning topic.",
+      "validation": {
+        "topic_level": {
+          "sample_size": 25,
+          "clear_ai": 25,
+          "ambiguous": 0,
+          "false_positive": 0,
+          "strict_precision": 1.0,
+          "seed": 424242
+        },
+        "global_v1_0_diagnostic": {
+          "sampled": 97,
+          "clear_ai": 89,
+          "ambiguous": 3,
+          "false_positive": 5,
+          "strict_precision": 0.9175
+        }
+      }
+    },
+    {
+      "id": "T11714",
+      "display_name": "Multimodal Machine Learning Applications",
+      "description": "This cluster of papers focuses on the development and improvement of visual question answering systems, image captioning techniques, and neural networks for understanding and generating descriptions of images and videos. The research involves semantic reasoning, multimodal fusion, scene graph generation, attention mechanisms, and deep learning approaches to bridge the gap between vision and language.",
+      "works_count_at_validation": 69277,
+      "subfield": {
+        "id": "1707",
+        "display_name": "Computer Vision and Pattern Recognition"
+      },
+      "field": {
+        "id": "17",
+        "display_name": "Computer Science"
+      },
+      "domain": {
+        "id": "3",
+        "display_name": "Physical Sciences"
+      },
+      "reason": "Multimodal machine learning and vision-language topic.",
+      "validation": {
+        "topic_level": {
+          "sample_size": 25,
+          "clear_ai": 25,
+          "ambiguous": 0,
+          "false_positive": 0,
+          "strict_precision": 1.0,
+          "seed": 424242
+        },
+        "global_v1_0_diagnostic": {
+          "sampled": 31,
+          "clear_ai": 30,
+          "ambiguous": 1,
+          "false_positive": 0,
+          "strict_precision": 0.9677
+        }
+      }
+    }
+  ]
+}

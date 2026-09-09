@@ -109,6 +109,7 @@ class OpenAlexExtractionTests(unittest.TestCase):
         self.assertEqual(extractor.validate_work(work(topics=[OTHER])), "selected_topic")
         self.assertEqual(extractor.validate_work(work(year=2019), expected_year=2020), "year_scope")
         self.assertEqual(extractor.validate_work(work(type="dataset")), "type_scope")
+        self.assertEqual(extractor.validate_work(work(is_retracted=True)), "retracted")
 
     def test_sample_paging(self):
         calls = []
@@ -155,6 +156,8 @@ class OpenAlexExtractionTests(unittest.TestCase):
         self.assertEqual(stats["duplicates_removed"], 2)
         self.assertEqual(stats["refill_attempts"], 1)
         self.assertEqual(quality.missing_doi, 2)
+        self.assertEqual(quality.missing_country, 2)
+        self.assertEqual(quality.missing_institution, 2)
         self.assertEqual(quality.missing_source, 2)
 
     def test_retry_429_5xx_and_timeout(self):

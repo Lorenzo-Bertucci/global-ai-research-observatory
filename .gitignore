@@ -12,3 +12,9 @@ __pycache__/
 *.partial
 data/raw/*
 !data/raw/.gitkeep
+
+.venv/
+venv/
+.streamlit/secrets.toml
+.idea/
+.vscode/

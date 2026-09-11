@@ -1,284 +1,289 @@
 # Global AI Research Observatory
 
-Global AI Research Observatory is a university Data Warehousing project: a **Data Warehouse for analyzing AI-related scientific research** published between **2018 and 2025**. The repository implements source extraction, a PostgreSQL Reconciled Layer, a dimensional warehouse, and OLAP smoke queries.
+## Overview
 
-## Research objective
+A university data-management and data-warehousing project for exploring the
+international structure of Artificial Intelligence research published from
+2018 through 2025. It integrates OpenAlex publication metadata with World Bank
+country-year indicators and exposes the result through PostgreSQL OLAP queries
+and a Streamlit/Plotly dashboard.
 
-The project is designed to analyze:
+## Analytical goals
 
-- the temporal evolution of AI-related scientific output;
-- its thematic distribution and growth;
-- geographic specialization;
-- absolute scientific output and output normalized by demographic and socioeconomic indicators.
+- Track the growth and publication ecosystem of AI research.
+- Explore Topic → Subfield → Field → Domain thematic structure.
+- Compare country, region, income-level, and institutional participation.
+- Relate fractional country output to observed socioeconomic conditions.
 
 ## Data sources
 
-- **OpenAlex** supplies works, Topics, citations, authorships, institutions, countries, publication sources, and Open Access metadata.
-- **World Bank WDI** supplies annual population, economic, connectivity, and R&D indicators.
+### OpenAlex corpus methodology
 
-The shared analytical period is 2018–2025.
+The adopted final corpus definition selects a work when its **Primary Topic**
+belongs to the source-native OpenAlex Artificial Intelligence subfield, ID
+`1702`. The extractor applies the same boundary independently to each year from
+2018 through 2025, allows `article`, `review`, `conference-paper`, `preprint`,
+`book`, and `book-chapter`, and excludes retracted works.
 
-## Current architecture
+Primary Topic controls corpus membership only. Every topic returned by OpenAlex
+for a selected work is retained, so the topic bridge contains one primary topic
+and all available secondary topics with explicit primary flags.
+
+### Sampling strategy
+
+At the recorded extraction, 1,487,116 OpenAlex works qualified for the corpus.
+The canonical dataset is a directly sourced, reproducible, year-stratified
+sample of exactly 50,000 works:
+
+1. Query the current qualifying population count separately for every year.
+2. Allocate 50,000 observations proportionally across the eight years.
+3. Resolve integer allocations with deterministic largest remainder rounding.
+4. Request each annual stratum with OpenAlex native `sample` and `seed`, using
+   the fixed master seed plus the publication year.
+5. Page through the complete annual sample, combine the strata, globally
+   deduplicate, and enforce the corpus guardrails.
+6. Publish the raw JSONL and concise provenance manifest only after the complete
+   sample passes validation.
+
+The methodological constants are intentionally visible near the top of
+`extraction/extract_openalex.py`; no separate OpenAlex configuration file is
+needed. The manifest records the live population counts, allocations, seeds,
+timestamp, API activity, and content hash. OpenAlex evolves, so a rerun may
+produce different population counts even though the sampling procedure and seed
+strategy remain fixed.
+
+These 50,000 publications are an analytical sample of the qualifying OpenAlex
+population, not the entire population. Results describe the observed sample and
+should not be presented as unqualified population estimates.
+
+### World Bank
+
+The frozen World Development Indicators extract covers 2018–2025 and retains
+real economies rather than World Bank aggregates.
+
+| Code | Measure |
+|---|---|
+| `SP.POP.TOTL` | Population |
+| `NY.GDP.MKTP.CD` | GDP, current USD |
+| `NY.GDP.PCAP.CD` | GDP per capita, current USD |
+| `IT.NET.USER.ZS` | Internet users, % of population |
+| `GB.XPD.RSDV.GD.ZS` | R&D expenditure, % of GDP |
+
+Missing observations remain SQL `NULL`; the project performs no interpolation,
+imputation, or zero substitution.
+
+## Architecture
 
 ```text
-OpenAlex API + World Bank API
-              |
-              v
-         RAW JSON / JSONL
-              |
-              v
-    Python reconciliation ETL
-              |
-              v
- PostgreSQL schema: reconciled
-              |
-              v
-  PostgreSQL schema: dw
-       Fact Constellation
-              |
-              v
-        OLAP smoke queries
+OpenAlex + World Bank
+        ↓
+  Raw JSON / JSONL
+        ↓
+ PostgreSQL Reconciliation
+        ↓
+ PostgreSQL Data Warehouse
+        ↓
+   OLAP + Dashboard
 ```
 
-Source extraction, source-level validation, the Reconciled Layer, and the multidimensional Data Warehouse infrastructure are implemented. Final empirical OLAP analysis remains pending until the final corpus methodology is confirmed.
+Corpus selection exists only in the OpenAlex extractor. Reconciliation and the
+warehouse remain source-independent downstream layers. Their SQL schemas are
+the physical sources of truth, and each loader rebuilds only its own schema in
+a transaction.
 
-## Current OpenAlex development extraction
+### Reconciled layer
 
-The current development corpus was extracted with **AI Topic Set version 1.1**, retained as a reproducible provisional method while the final corpus-selection methodology awaits the professor's decision:
+The nine-table reconciled model preserves natural/source keys:
 
-- `T10028` — Topic Modeling
-- `T11714` — Multimodal Machine Learning Applications
+- `r_work`, `r_topic`, `r_work_topic`
+- `r_country`, `r_work_country`
+- `r_institution`, `r_work_institution`
+- `r_source`
+- `r_country_year_indicator`
 
-A work is included if at least one Topic in its `topics[]` array belongs to the version 1.1 AI Topic Set. Its methodological validation achieved **98.33% strict precision** and **99.00% broad precision**.
+Missing optional relationships create no artificial member. Dates and years,
+primary-topic relationships, source identity, and country mappings are checked
+before publication.
 
-The complete 2018–2025 population contains **283,851 works**. Detailed metadata are retained for **24,000 works**, selected with proportional stratified random sampling by publication year. Integer allocations use the **Largest Remainder Method**, and each yearly stratum uses a fixed deterministic seed.
+### Dimensional warehouse
 
-Population-level yearly counts are stored separately and must be used for aggregate temporal analysis. Raw counts from the 24,000-work sample must not be treated as full-population counts.
+The fact constellation contains two facts, six dimensions, and three bridges:
 
-This current corpus is not necessarily the final corpus for the Data Warehouse. Corpus selection remains upstream from, and independent of, the Reconciled Layer: the reconciliation ETL treats every supplied OpenAlex work as already selected and contains no AI-classification logic.
+- Facts: `fact_publication`, `fact_country_year`
+- Dimensions: `dim_date`, `dim_year`, `dim_country`, `dim_topic`,
+  `dim_institution`, `dim_source`
+- Bridges: `bridge_publication_topic`, `bridge_publication_country`,
+  `bridge_publication_institution`
 
-Current development-extraction results:
+`fact_publication` has one row per sampled work. `fact_country_year` has one row
+per observed World Bank economy and year. Surrogate keys are confined to the
+warehouse, while source identifiers remain unique dimension attributes.
 
-| Check | Result |
-|---|---:|
-| Population | 283,851 |
-| Sample rows | 24,000 |
-| Unique IDs | 24,000 |
-| Duplicates | 0 |
-| Guardrail failures | 0 |
+## Analytical semantics
 
-Missing optional metadata in the detailed sample:
+### Full vs fractional counting
 
-| Field | Missing |
-|---|---:|
-| DOI | 5.3792% |
-| Country | 33.0750% |
-| Institution | 33.0583% |
-| Source | 30.7167% |
-| Primary Topic | 0% |
+Full counting measures the number of distinct publications in which a member
+participates. Fractional counting distributes one publication across the leaf
+members of a multi-valued relationship. Parent-level full rollups first reduce
+to Publication × Parent, so two topics in the same subfield count once at that
+subfield. Fractional parent rollups sum the original leaf weights.
 
-OpenAlex raw files:
+### Normalized country metrics and missing data
 
-- `data/raw/openalex_ai_population.json`: complete population counts by publication year.
-- `data/raw/openalex_ai_works.jsonl`: the 24,000 sampled works with detailed source metadata.
-- `data/raw/openalex_ai_manifest.json`: filters, sampling allocation, seeds, weights, provenance, extraction counters, and output metadata.
+Country normalization always uses fractional country attribution regardless of
+the dashboard counting selector:
 
-## World Bank extraction
+- publications per million people;
+- publications per billion USD of GDP.
 
-The World Bank dataset contains these five WDI indicators:
+Publication output is first aggregated to Country × Year, then drilled across
+to World Bank measures at the same grain. Missing or zero denominators produce
+`NULL`. Filters on other multi-valued dimensions use independent publication-key
+semi-joins; analytical measures never multiply country, topic, and institution
+bridges in one aggregation.
 
-- `SP.POP.TOTL` — population;
-- `NY.GDP.MKTP.CD` — GDP in current US dollars;
-- `NY.GDP.PCAP.CD` — GDP per capita in current US dollars;
-- `IT.NET.USER.ZS` — individuals using the Internet as a percentage of population;
-- `GB.XPD.RSDV.GD.ZS` — R&D expenditure as a percentage of GDP.
+Valid OpenAlex geographies are preserved even when the frozen World Bank source
+has no observation. Such members have `has_world_bank_data = FALSE`, no invented
+country-year facts, and unavailable normalized metrics.
 
-Its grain is **one country × one year** for 2018–2025. A complete skeleton contains **217 real economies** and **1,736 country-year rows**, with **0 duplicate** country-year keys. World Bank aggregates are excluded using the source country metadata.
+### Citation counts and additivity
 
-Missing observations remain JSON `null`; no imputation, interpolation, filling, or zero replacement is applied.
+`citation_count` is the cumulative OpenAlex value observed at extraction time,
+not citations received during publication year. Comparisons across publication
+years therefore have publication-age bias. Population is a level measure; GDP
+is treated as a flow; GDP per capita and percentage indicators are unit measures
+and are never summed.
 
-World Bank raw files:
+## OLAP sessions
 
-- `data/raw/world_bank_country_year.jsonl`: wide country-year rows containing country metadata and the five indicators.
-- `data/raw/world_bank_manifest.json`: indicator lineage, country selection, queries, pagination, provenance, missingness, and extraction counters.
+`analysis/sessions.py` defines and can execute/export the final twelve sessions;
+`analysis/olap_sessions.sql` is the generated standalone PostgreSQL form.
 
-## Data quality
+1. Absolute vs Normalized Geographic Leadership
+2. R&D Investment vs AI Research Intensity
+3. Evolution of AI Research / Post-2022 Analysis
+4. Topic Specialization and Thematic Evolution
+5. Wealth vs AI Research Intensity
+6. Digital Access vs AI Research Intensity
+7. Income-Level Research Gap
+8. Regional Research Capacity
+9. AI Research Growth vs Socioeconomic Change
+10. Institutional Leadership
+11. Cumulative Citation Impact
+12. Publication Ecosystem
 
-World Bank indicator coverage is:
+The query builders use read-only, parameterized SQL and preserve bridge grain,
+NULL semantics, and Full/Fractional behavior. The project does not hard-code
+empirical conclusions; those should be selected after inspecting results.
 
-| Indicator | Coverage |
-|---|---:|
-| Population | 100.0000% |
-| GDP | 94.5276% |
-| GDP per capita | 94.5276% |
-| Internet users | 74.3088% |
-| R&D expenditure | 32.4885% |
+## Dashboard
 
-R&D is the least complete indicator. Internet coverage is very limited for 2025, and R&D data for 2025 are unavailable. These source-level missing values are retained as `null`.
+The Streamlit/Plotly dashboard provides nine views:
 
-The current source-level data-quality reports are:
+1. Overview
+2. Research Growth
+3. Geographic Leadership
+4. Normalized Leadership
+5. Socioeconomic Context
+6. Topics
+7. Institutions
+8. Citation Impact
+9. Publication Ecosystem
 
-- `validation/results/openalex_data_quality.json`
-- `validation/results/world_bank_data_quality.json`
-
-They provide quality evidence, reproducibility metadata, and a debugging reference. They are not pipeline inputs.
-
-## Reconciled Layer
-
-The PostgreSQL schema `reconciled` contains nine relational tables built with stable source keys and no surrogate keys:
-
-| Table | Grain |
-|---|---|
-| `r_work` | one unique OpenAlex Work |
-| `r_topic` | one unique OpenAlex Topic, including its denormalized Subfield–Field–Domain hierarchy |
-| `r_work_topic` | one distinct Work–Topic association, with source order and score |
-| `r_country` | one reconciled geographic entity required by the integrated sources |
-| `r_work_country` | one distinct Work–Country association |
-| `r_institution` | one unique OpenAlex Institution |
-| `r_work_institution` | one distinct Work–Institution association |
-| `r_source` | one unique OpenAlex primary publication source |
-| `r_country_year_indicator` | one frozen WDI economy × year skeleton row |
-
-Countries are reconciled strictly by code. World Bank is canonical for socioeconomic country metadata and indicators where available, but its frozen WDI coverage does not perfectly coincide with the geographic entities observed in OpenAlex. Valid OpenAlex-only geographies are preserved in `r_country` with `has_world_bank_data = FALSE`; World Bank-specific attributes and country-year indicators remain unavailable rather than being imputed or geographically remapped. Unknown codes outside the explicit reconciliation policy still cause a readable error.
-
-In the current raw data, the OpenAlex-only cases are `RE` (`REU`, Réunion) and `TW` (`TWN`, Taiwan). They remain available for bibliometric analysis of publications, citations, topics, and institutions. Metrics normalized by population, GDP, or other World Bank indicators are unavailable for them because no corresponding frozen WDI observations exist.
-
-Missing scalar values become SQL `NULL`. Missing optional relationships create no artificial relationship row, and World Bank indicators are never imputed. When a primary Topic is supplied it must also occur in that work's Topic relationships. The ETL reads the JSONL inputs, deduplicates entities and many-to-many relationships, rejects conflicting source metadata, rebuilds only the `reconciled` schema in one transaction, and runs critical post-load checks before commit.
-
-## Data Warehouse
-
-The `dw` schema is a star-oriented Fact Constellation loaded exclusively from `reconciled.*`:
-
-| Table | Grain |
-|---|---|
-| `fact_publication` | one selected OpenAlex work |
-| `fact_country_year` | one frozen WDI economy × year skeleton row |
-| `dim_date` | one publication date |
-| `dim_year` | one World Bank observation year |
-| `dim_country` | one reconciled geographic entity |
-| `dim_topic` | one Topic with denormalized Subfield–Field–Domain hierarchy |
-| `dim_institution` | one OpenAlex Institution |
-| `dim_source` | one OpenAlex primary publication source |
-| `bridge_publication_topic` | one Publication–Topic association |
-| `bridge_publication_country` | one Publication–Country association |
-| `bridge_publication_institution` | one Publication–Institution association |
-
-Dimensions use warehouse surrogate keys while retaining unique source identifiers. `publication_type` remains a low-cardinality attribute in `fact_publication`; a missing source is represented by a nullable foreign key. The Topic bridge explicitly marks the source primary Topic without introducing a separate primary-Topic dimension. Bridge rows contain both membership and a technical fractional weight, so later analyses may choose full counting (ignore the weight) or fractional counting (use the weight) without changing the schema. Fractional counting is the recommended default for country-normalized metrics; full counting remains valid for participation analysis.
-
-`citation_count` is the cumulative citation snapshot associated with a publication at OpenAlex extraction time. It does not represent citations received during the publication year.
-
-Publication dates use `dim_date` with Date–Month–Quarter–Year attributes. Annual socioeconomic observations use the separate `dim_year`; their shared `calendar_year` value supports semantically correct Country × Year drill-across without mapping annual observations to an artificial date.
+Filters cover time, geography, topic hierarchy, institution/source/publication
+types, language, Open Access, and Full/Fractional counting. Queries aggregate in
+PostgreSQL and expose compact downloadable result tables.
 
 ## Repository structure
 
 ```text
 .
-├── .gitignore
-├── README.md
-├── config
-│   └── openalex_ai_topics.json
-├── data
-│   └── raw
-│       ├── openalex_ai_manifest.json
-│       ├── openalex_ai_population.json
-│       ├── openalex_ai_works.jsonl
-│       ├── world_bank_country_year.jsonl
-│       └── world_bank_manifest.json
-├── extraction
-│   ├── extract_openalex.py
-│   └── extract_world_bank.py
-├── analysis
-│   └── olap_smoke.sql
-├── reconciliation
-│   ├── load_reconciled.py
-│   └── schema.sql
-├── warehouse
-│   ├── load_dw.py
-│   └── schema.sql
-├── tests
-│   ├── test_extract_openalex.py
-│   ├── test_extract_world_bank.py
-│   ├── test_reconciled_layer.py
-│   └── test_load_dw.py
-└── validation
-    └── results
-        ├── openalex_data_quality.json
-        └── world_bank_data_quality.json
+├── extraction/       OpenAlex and World Bank source extraction
+├── data/raw/         Local, Git-ignored raw datasets and manifests
+├── reconciliation/   Natural-key reconciled schema and transactional loader
+├── warehouse/        Fact-constellation schema and transactional loader
+├── analysis/         Twelve OLAP sessions and compact smoke queries
+├── dashboard/        Streamlit application, query layer, views, and dependencies
+├── tests/            Unit and isolated-PostgreSQL integration tests
+├── .streamlit/       Versioned visual/runtime configuration
+├── run_dashboard.py  One-command dashboard launcher
+└── README.md          Project documentation
 ```
 
-## How to run
+## Setup
 
-Run the extractors from the repository root:
+- Python 3.11 or newer
+- PostgreSQL 16 or compatible
+- dependencies in `dashboard/requirements.txt`
+
+One-time environment setup from the repository root:
 
 ```bash
-python3 extraction/extract_openalex.py
-python3 extraction/extract_world_bank.py
+python3 -m venv .venv
+.venv/bin/python -m pip install -r dashboard/requirements.txt
+createdb global_ai_observatory
 ```
 
-Both commands perform live API extraction and overwrite their final outputs only after local validation succeeds. OpenAlex reads `OPENALEX_API_KEY` or `OPEN_ALEX_KEY` from the environment, with optional fallback to the ignored local `.env` file. World Bank WDI requires no API key. Supported output and request options are documented by each command's `--help` flag.
+The normal local database is `postgresql:///global_ai_observatory`. The launcher
+uses it automatically and re-executes through the repository `.venv` when
+available. An existing `DATABASE_URL` is an optional override for another
+PostgreSQL connection; passwords must never be committed.
 
-The Reconciled Layer requires PostgreSQL and Psycopg 3:
+For OpenAlex extraction, provide `OPENALEX_API_KEY` (or `OPEN_ALEX_KEY`) through
+the environment or an ignored local `.env` file. No key is written to code,
+manifests, or logs. World Bank extraction requires no key.
+
+## Running the pipeline
+
+Raw files are local and Git-ignored. Preserve the manifests with any analysis so
+the live-source state and hashes remain traceable.
 
 ```bash
-python3 -m pip install 'psycopg[binary]>=3.2,<4'
-export DATABASE_URL='postgresql:///global_ai_observatory'
-python3 reconciliation/load_reconciled.py
-python3 warehouse/load_dw.py
+python extraction/extract_openalex.py
+python extraction/extract_world_bank.py
+DATABASE_URL=postgresql:///global_ai_observatory python reconciliation/load_reconciled.py
+DATABASE_URL=postgresql:///global_ai_observatory python warehouse/load_dw.py
+DATABASE_URL=postgresql:///global_ai_observatory python analysis/sessions.py --export --execute
 ```
 
-`DATABASE_URL` must identify a database intended for this project. Each loader atomically drops and recreates only its own target schema. The DW loader reads only `reconciled.*`; it does not modify reconciled tables, raw files, or other PostgreSQL schemas. Alternative Reconciled input paths are available through `--openalex` and `--world-bank`.
+The World Bank source is frozen for this submission and normally does not need
+to be re-extracted. Run reconciliation before the warehouse whenever raw data
+change. The explicit connection shown here is for pipeline maintenance; normal
+dashboard startup supplies the same local default automatically.
 
-Validate and summarize source compatibility without connecting to PostgreSQL or performing a load with:
+## Running the dashboard
+
+No activation, database export, or separate Streamlit command is required for
+the finalized local repository:
 
 ```bash
-python3 reconciliation/load_reconciled.py --validate-only
+python run_dashboard.py
 ```
 
-After loading the DW, execute the non-final OLAP validation queries with:
+The launcher performs a fast package, code, database, year, fact, and bridge
+preflight before starting Streamlit. It does not download data, rebuild the
+warehouse, or run the full tests. For a non-launching check, use
+`python run_dashboard.py --check-only`.
+
+## Running tests
 
 ```bash
-psql "$DATABASE_URL" -f analysis/olap_smoke.sql
+python -m unittest discover -s tests -v
 ```
 
-## Tests
+Integration tests create isolated PostgreSQL databases through
+`TEST_DATABASE_URL` (default `postgresql:///postgres`). The suite covers final
+sampling, atomic failure behavior, reconciliation, dimensional integrity,
+idempotency/rollback, bridge-safe query semantics, all OLAP sessions, dashboard
+views, and launcher behavior.
 
-Run the complete offline unit and local-artifact test suite with:
+## Limitations
 
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-Current extractor-test result: **23/23 tests pass**.
-
-The Reconciled Layer integration tests create and remove an isolated PostgreSQL database. They use `TEST_DATABASE_URL` as the administrative connection when set, otherwise `postgresql:///postgres`:
-
-```bash
-python3 -m unittest tests/test_reconciled_layer.py -v
-python3 -m unittest tests/test_load_dw.py -v
-python3 -m unittest discover -s tests -v
-```
-
-Current verified result: **10/10 Reconciled Layer tests, 7/7 DW tests, and 40/40 total tests pass**. The seven OLAP smoke queries are executed by the DW integration tests.
-
-## Current project status
-
-```text
-Data acquisition: COMPLETE
-Reconciled Layer: COMPLETE AND TESTED
-DW infrastructure: COMPLETE AND TESTED
-OLAP infrastructure: SMOKE-TESTED
-
-World Bank source dataset: FROZEN
-Current OpenAlex corpus: NOT NECESSARILY FINAL
-Corpus selection and reconciliation: INDEPENDENT
-OpenAlex-only geographies: RE (Réunion) and TW (Taiwan), preserved without WDI indicators
-Final/full database load: NOT PERFORMED
-Final OLAP analysis: PENDING FINAL CORPUS
-
-Next phase:
-Professor decision, final OpenAlex corpus, final load, and empirical OLAP exploration
-```
-
-## Next step
-
-Freeze the final OpenAlex corpus-selection methodology, rerun the existing RAW → RECONCILED → DW pipeline, and then select the most informative OLAP results for the final presentation. The current sample has been used only for temporary development validation, not as the final empirical dataset.
+- The 50,000 works are a stratified reproducible sample, not the full qualifying
+  OpenAlex population.
+- OpenAlex classifications, metadata, and citation snapshots evolve after the
+  recorded extraction time.
+- World Bank missingness is retained, and R&D coverage is particularly sparse.
+- Cumulative citations favor older publications because observation time is not
+  publication time.

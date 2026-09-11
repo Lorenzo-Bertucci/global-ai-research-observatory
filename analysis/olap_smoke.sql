@@ -40,17 +40,18 @@ JOIN dw.dim_topic topic ON topic.topic_key = bridge.topic_key
 GROUP BY topic.openalex_topic_id, topic.topic_name, topic.subfield_name
 ORDER BY publication_count DESC, topic.openalex_topic_id;
 
--- Publication participation by institution type.
-SELECT
-    institution.institution_type,
-    SUM(publication.publication_count) AS publication_count
-FROM dw.fact_publication publication
-JOIN dw.bridge_publication_institution bridge
-    ON bridge.publication_key = publication.publication_key
-JOIN dw.dim_institution institution
-    ON institution.institution_key = bridge.institution_key
-GROUP BY institution.institution_type
-ORDER BY publication_count DESC, institution.institution_type;
+-- Publication participation by institution type: establish Publication x Type
+-- before aggregating so two institutions of the same type count only once.
+WITH publication_type AS (
+    SELECT publication.publication_key, institution.institution_type
+    FROM dw.fact_publication publication
+    JOIN dw.bridge_publication_institution bridge USING (publication_key)
+    JOIN dw.dim_institution institution USING (institution_key)
+    GROUP BY publication.publication_key, institution.institution_type
+)
+SELECT institution_type, count(*) AS publication_count
+FROM publication_type GROUP BY institution_type
+ORDER BY publication_count DESC, institution_type;
 
 -- Publications by optional primary-source type.
 SELECT

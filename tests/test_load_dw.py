@@ -439,7 +439,8 @@ class WarehouseLoadTests(unittest.TestCase):
             {row[0]: row[3] for row in results[2]},
             {"https://openalex.org/T1": 2, "https://openalex.org/T2": 2},
         )
-        self.assertEqual(results[3], [("education", 4)])
+        # W1 has two education institutions but one parent-level participation.
+        self.assertEqual(results[3], [("education", 3)])
         self.assertEqual(results[4], [("journal", 2), ("<missing>", 1)])
         self.assertEqual(
             {row[0]: row[1] for row in results[5]},

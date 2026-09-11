@@ -412,6 +412,26 @@ class ReconciledLayerTests(unittest.TestCase):
             self.assertNotIn("FR", by_code)
             self.assertNotIn("CN", by_code)
 
+    def test_additional_observed_iso_geographies_keep_identity(self):
+        codes = {"GF": "GUF", "GP": "GLP", "MQ": "MTQ", "MS": "MSR"}
+        self.load(
+            [work("W-new-geographies", authorships=[authorship(list(codes), [])])]
+        )
+        with psycopg.connect(self.database_url) as connection:
+            rows = connection.execute(
+                "SELECT country_code_iso2, country_code_iso3, has_world_bank_data "
+                "FROM reconciled.r_country WHERE country_code_iso2 = ANY(%s)",
+                (list(codes),),
+            ).fetchall()
+            self.assertEqual({r[0]: r[1] for r in rows}, codes)
+            self.assertTrue(all(r[2] is False for r in rows))
+            count = connection.execute(
+                "SELECT count(*) FROM reconciled.r_country_year_indicator "
+                "WHERE country_code_iso2 = ANY(%s)",
+                (list(codes),),
+            ).fetchone()[0]
+            self.assertEqual(count, 0)
+
     def test_unknown_openalex_country_code_is_rejected_without_data_loss(self):
         self.load([work()])
         bad = work("W2", authorships=[authorship(["ZZ"], [])])

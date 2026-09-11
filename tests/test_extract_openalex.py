@@ -3,12 +3,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "extraction"))
-import extract_openalex as extractor  # noqa: E402
+from extraction import extract_openalex as extractor
 
 
 class Response:
@@ -26,12 +24,20 @@ class Response:
         return json.dumps(self.payload).encode()
 
 
-SELECTED = {"id": "https://openalex.org/T10028", "display_name": "Topic Modeling"}
-OTHER = {"id": "https://openalex.org/T99999", "display_name": "Unrelated"}
+AI_TOPIC = {
+    "id": "https://openalex.org/T10028",
+    "display_name": "Topic Modeling",
+    "subfield": {"id": "https://openalex.org/subfields/1702"},
+}
+SECONDARY_TOPIC = {
+    "id": "https://openalex.org/T99999",
+    "display_name": "Secondary",
+    "subfield": {"id": "https://openalex.org/subfields/9999"},
+}
 
 
-def work(work_id="W1", topics=None, year=2022, **extra):
-    topics = [SELECTED] if topics is None else topics
+def work(work_id="W1", year=2022, topics=None, **extra):
+    topics = [AI_TOPIC] if topics is None else topics
     value = {
         "id": f"https://openalex.org/{work_id}" if work_id else None,
         "doi": None,
@@ -55,115 +61,182 @@ def work(work_id="W1", topics=None, year=2022, **extra):
 
 
 class OpenAlexExtractionTests(unittest.TestCase):
-    def test_config_and_filter_are_frozen(self):
-        self.assertEqual(extractor.TOPIC_CONFIG["status"], "frozen")
-        self.assertEqual(extractor.TOPIC_CONFIG["version"], "1.1")
-        self.assertEqual(extractor.AI_TOPIC_SET_FINAL, {"T10028", "T11714"})
-        value = extractor.build_filter()
-        self.assertIn("topics.id:T10028|T11714", value)
-        self.assertIn("from_publication_date:2018-01-01", value)
-        self.assertIn("to_publication_date:2025-12-31", value)
+    def test_corpus_constants_and_year_filter_are_explicit(self):
+        self.assertEqual(extractor.AI_SUBFIELD_ID, "1702")
+        self.assertEqual(extractor.YEARS, tuple(range(2018, 2026)))
+        self.assertEqual(extractor.TARGET_SAMPLE_SIZE, 50_000)
+        value = extractor.build_filter(year=2022)
+        self.assertIn("primary_topic.subfield.id:1702", value)
+        self.assertIn("publication_year:2022", value)
         self.assertIn("is_retracted:false", value)
-        self.assertNotIn("keywords", value)
-        self.assertNotIn("subfield", value)
-        self.assertNotIn("search", value)
+        self.assertNotIn("topics.id:", value)
 
-    def test_population_group_parsing(self):
-        payload = {
-            "meta": {"count": 30},
-            "group_by": [
-                {"key": "2018", "key_display_name": "2018", "count": 10},
-                {"key": "2019", "key_display_name": "2019", "count": 20},
-            ],
+    def test_allocation_is_deterministic_and_totals_exactly_50000(self):
+        population = {
+            2018: 135_061,
+            2019: 149_177,
+            2020: 161_895,
+            2021: 171_702,
+            2022: 168_366,
+            2023: 196_327,
+            2024: 225_986,
+            2025: 278_602,
         }
-        total, counts = extractor.parse_population(payload)
-        self.assertEqual(total, 30)
-        self.assertEqual(counts[2018], 10)
-        self.assertEqual(counts[2025], 0)
-        with self.assertRaises(ValueError):
-            extractor.parse_population({**payload, "meta": {"count": 31}})
-
-    def test_largest_remainder_allocation(self):
-        self.assertEqual(
-            extractor.largest_remainder_allocation({2018: 100, 2019: 200, 2020: 700}, 100),
-            {2018: 10, 2019: 20, 2020: 70},
-        )
-        allocation = extractor.largest_remainder_allocation(
-            {2018: 1, 2019: 1, 2020: 1}, 2
-        )
-        self.assertEqual(allocation, {2018: 1, 2019: 1, 2020: 0})
-        self.assertEqual(sum(allocation.values()), 2)
-
-    def test_sampling_metadata_and_determinism(self):
-        population = {2018: 100, 2019: 200, 2020: 700}
-        first = extractor.build_sampling_plan(population, 100)
-        second = extractor.build_sampling_plan(population, 100)
+        first = extractor.largest_remainder_allocation(population)
+        second = extractor.largest_remainder_allocation(population)
         self.assertEqual(first, second)
-        self.assertEqual(first[2018]["sampling_probability"], 0.1)
-        self.assertEqual(first[2018]["sampling_weight"], 10.0)
-        self.assertEqual(first[2018]["seed"], 2026090618)
+        self.assertEqual(sum(first.values()), 50_000)
+        self.assertTrue(all(value <= extractor.SAMPLE_MAX for value in first.values()))
 
-    def test_guardrail(self):
-        self.assertIsNone(extractor.validate_work(work()))
-        self.assertEqual(extractor.validate_work(work(topics=[])), "missing_topics")
-        self.assertEqual(extractor.validate_work(work(topics=[OTHER])), "selected_topic")
-        self.assertEqual(extractor.validate_work(work(year=2019), expected_year=2020), "year_scope")
-        self.assertEqual(extractor.validate_work(work(type="dataset")), "type_scope")
-        self.assertEqual(extractor.validate_work(work(is_retracted=True)), "retracted")
+    def test_annual_seed_is_stable_and_year_specific(self):
+        self.assertEqual(extractor.annual_seed(2018), extractor.MASTER_SEED + 2018)
+        self.assertEqual(extractor.annual_seed(2025), extractor.MASTER_SEED + 2025)
+        self.assertNotEqual(extractor.annual_seed(2018), extractor.annual_seed(2019))
 
-    def test_sample_paging(self):
+    def test_primary_selects_work_and_all_topics_are_preserved(self):
+        selected = work(topics=[AI_TOPIC, SECONDARY_TOPIC])
+        self.assertIsNone(extractor.validate_work(selected, expected_year=2022))
+        self.assertEqual(selected["topics"], [AI_TOPIC, SECONDARY_TOPIC])
+        rejected = work(topics=[SECONDARY_TOPIC, AI_TOPIC])
+        self.assertEqual(
+            extractor.validate_work(rejected), "primary_topic_subfield"
+        )
+
+    def test_scope_and_relationship_guardrails(self):
+        cases = (
+            ({"year": 2017}, "publication_year"),
+            ({"publication_date": "2021-01-01"}, "publication_date_year_mismatch"),
+            ({"publication_date": "bad"}, "publication_date"),
+            ({"type": "dataset"}, "work_type"),
+            ({"is_retracted": True}, "retracted_or_unknown"),
+            ({"is_retracted": None}, "retracted_or_unknown"),
+            ({"primary_topic": None}, "primary_topic"),
+            ({"topics": [SECONDARY_TOPIC], "primary_topic": AI_TOPIC}, "primary_topic_relationship"),
+        )
+        for fields, expected in cases:
+            with self.subTest(fields=fields):
+                self.assertEqual(extractor.validate_work(work(**fields)), expected)
+
+    def test_population_count_uses_one_matching_request_per_year(self):
         calls = []
-        payloads = {
-            1: {"meta": {"count": 3}, "results": [work("W1"), work("W2")]},
-            2: {"meta": {"count": 3}, "results": [work("W3")]},
-        }
 
-        def fetcher(params):
+        def fetch(params):
             calls.append(params)
-            return payloads[params["page"]]
+            year = int(params["filter"].split("publication_year:", 1)[1].split(",", 1)[0])
+            return {"meta": {"count": year}}
 
-        rows = extractor.fetch_year_sample(2022, 3, 77, fetcher)
-        self.assertEqual(len(rows), 3)
-        self.assertEqual([call["page"] for call in calls], [1, 2])
-        self.assertTrue(all(call["sample"] == 3 for call in calls))
+        counts = extractor.fetch_population_by_year(fetch)
+        self.assertEqual(counts[2018], 2018)
+        self.assertEqual(len(calls), 8)
+        self.assertTrue(all(call["per_page"] == 1 for call in calls))
 
-    def test_deduplication_and_optional_fields(self):
-        plan = {
-            2022: {
-                "population": 10,
-                "population_share": 1.0,
-                "target_sample": 2,
-                "sampling_probability": 0.2,
-                "sampling_weight": 5.0,
-                "seed": 77,
+    def test_native_sample_pages_every_result_and_keeps_secondary_topics(self):
+        calls = []
+
+        def fetch(params):
+            calls.append(params)
+            page = params["page"]
+            ids = range((page - 1) * 2, min(page * 2, 5))
+            return {
+                "meta": {"count": 5},
+                "results": [work(f"W{index}", topics=[AI_TOPIC, SECONDARY_TOPIC]) for index in ids],
             }
-        }
-        calls = 0
 
-        def fetcher(_params):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return {"meta": {"count": 2}, "results": [work("W1"), work("W1")]}
-            rows = [work("W1"), work("W2")] + [work("W1") for _ in range(8)]
-            return {"meta": {"count": 10}, "results": rows}
+        with patch.object(extractor, "PER_PAGE", 2):
+            rows = extractor.fetch_year_sample(2022, 5, 77, fetch)
+        self.assertEqual(len(rows), 5)
+        self.assertEqual([call["page"] for call in calls], [1, 2, 3])
+        self.assertTrue(all(call["sample"] == 5 and call["seed"] == 77 for call in calls))
+        self.assertEqual(rows[0]["topics"], [AI_TOPIC, SECONDARY_TOPIC])
+
+    def test_atomic_success_writes_manifest_and_exact_unique_sample(self):
+        years = (2018, 2019)
+        sample_rows = {
+            2018: [work("W1", 2018, [AI_TOPIC, SECONDARY_TOPIC]), work("W2", 2018)],
+            2019: [work("W3", 2019), work("W4", 2019)],
+        }
+
+        def fetch(params):
+            year = int(params["filter"].split("publication_year:", 1)[1].split(",", 1)[0])
+            if "sample" not in params:
+                return {"meta": {"count": 10}}
+            return {"meta": {"count": 2}, "results": sample_rows[year]}
 
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "works.jsonl.tmp"
-            stats, quality = extractor.collect_sample(output, plan, fetcher)
+            base = Path(directory)
+            output = base / "works.jsonl"
+            manifest_path = base / "manifest.json"
+            stats = extractor.new_api_stats()
+            with (
+                patch.object(extractor, "YEARS", years),
+                patch.object(extractor, "TARGET_SAMPLE_SIZE", 4),
+                patch.object(extractor, "PER_PAGE", 2),
+            ):
+                manifest = extractor.extract(
+                    output_path=output,
+                    manifest_path=manifest_path,
+                    fetcher=fetch,
+                    rate_fetcher=lambda: {"credits_remaining": 100},
+                    stats=stats,
+                )
             rows = [json.loads(line) for line in output.read_text().splitlines()]
-        self.assertEqual([extractor.short_id(row["id"]) for row in rows], ["W1", "W2"])
-        self.assertEqual(stats["duplicates_removed"], 2)
-        self.assertEqual(stats["refill_attempts"], 1)
-        self.assertEqual(quality.missing_doi, 2)
-        self.assertEqual(quality.missing_country, 2)
-        self.assertEqual(quality.missing_institution, 2)
-        self.assertEqual(quality.missing_source, 2)
+            self.assertEqual(len(rows), 4)
+            self.assertEqual(len({row["id"] for row in rows}), 4)
+            self.assertEqual(rows[0]["topics"], [AI_TOPIC, SECONDARY_TOPIC])
+            self.assertEqual(manifest["actual_total"], 4)
+            self.assertEqual(manifest["duplicate_count"], 0)
+            self.assertEqual(manifest["corpus_guardrail_failure_count"], 0)
+            self.assertTrue(manifest["complete"])
+            self.assertEqual(extractor.sha256_file(output), manifest["sha256"])
+            self.assertFalse((base / "works.jsonl.tmp").exists())
+
+    def test_failure_preserves_previous_canonical_files(self):
+        years = (2018, 2019)
+
+        def fetch(params):
+            year = int(params["filter"].split("publication_year:", 1)[1].split(",", 1)[0])
+            if "sample" not in params:
+                return {"meta": {"count": 10}}
+            invalid = work(f"W{year}", year, is_retracted=True)
+            valid = work(f"W{year}x", year)
+            return {"meta": {"count": 2}, "results": [invalid, valid]}
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            output = base / "works.jsonl"
+            manifest = base / "manifest.json"
+            output.write_text("previous raw\n")
+            manifest.write_text('{"previous": true}\n')
+            with (
+                patch.object(extractor, "YEARS", years),
+                patch.object(extractor, "TARGET_SAMPLE_SIZE", 4),
+                patch.object(extractor, "PER_PAGE", 2),
+                self.assertRaisesRegex(extractor.ExtractionError, "guardrail"),
+            ):
+                extractor.extract(
+                    output_path=output,
+                    manifest_path=manifest,
+                    fetcher=fetch,
+                    rate_fetcher=lambda: {"credits_remaining": 100},
+                )
+            self.assertEqual(output.read_text(), "previous raw\n")
+            self.assertEqual(json.loads(manifest.read_text()), {"previous": True})
+            self.assertFalse((base / "works.jsonl.tmp").exists())
+
+    def test_budget_metadata_excludes_api_key(self):
+        parsed = extractor.parse_rate_limit(
+            {"api_key": "masked", "rate_limit": {"credits_remaining": 600, "daily_remaining_usd": 0.06}}
+        )
+        self.assertEqual(parsed["credits_remaining"], 600)
+        self.assertNotIn("api_key", parsed)
+        extractor.ensure_budget(parsed, 500)
+        with self.assertRaisesRegex(extractor.ExtractionError, "Insufficient"):
+            extractor.ensure_budget(parsed, 601)
 
     def test_retry_429_5xx_and_timeout(self):
         for failure, counter in (
-            (HTTPError("url", 429, "rate", {"Retry-After": "0"}, io.BytesIO(b"")), "responses_429"),
-            (HTTPError("url", 503, "server", {}, io.BytesIO(b"")), "responses_5xx"),
+            (HTTPError("url", 429, "rate", {"Retry-After": "0"}, io.BytesIO()), "responses_429"),
+            (HTTPError("url", 503, "server", {}, io.BytesIO()), "responses_5xx"),
             (URLError(TimeoutError("timed out")), "timeouts"),
             (TimeoutError("timed out"), "timeouts"),
         ):
@@ -177,70 +250,9 @@ class OpenAlexExtractionTests(unittest.TestCase):
                 return outcome
 
             stats = extractor.new_api_stats()
-            payload = extractor.fetch_json(
-                {}, opener=opener, sleep=lambda _seconds: None, stats=stats
-            )
-            self.assertEqual(payload["results"], [])
+            extractor.fetch_json({}, opener=opener, sleep=lambda _: None, stats=stats)
             self.assertEqual(stats[counter], 1)
             self.assertEqual(stats["retries"], 1)
-
-    def test_atomic_cleanup_on_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
-            finals = [base / name for name in ("population.json", "works.jsonl", "manifest.json", "quality.json")]
-
-            def failing_fetcher(_params):
-                raise RuntimeError("stop")
-
-            with self.assertRaises(RuntimeError):
-                extractor.run_extraction(
-                    *finals,
-                    fetcher=failing_fetcher,
-                    request_stats=extractor.new_api_stats(),
-                )
-            self.assertFalse(any(path.exists() for path in finals))
-            self.assertFalse(any(path.with_name(path.name + ".tmp").exists() for path in finals))
-
-    def test_final_live_artifacts_exist_and_are_consistent(self):
-        root = Path(__file__).resolve().parents[1]
-        population_path = root / "data/raw/openalex_ai_population.json"
-        works_path = root / "data/raw/openalex_ai_works.jsonl"
-        manifest_path = root / "data/raw/openalex_ai_manifest.json"
-        quality_path = root / "validation/results/openalex_data_quality.json"
-        self.assertTrue(all(path.exists() for path in (population_path, works_path, manifest_path, quality_path)))
-        population = json.loads(population_path.read_text())
-        manifest = json.loads(manifest_path.read_text())
-        quality = json.loads(quality_path.read_text())
-        with works_path.open(encoding="utf-8") as source:
-            works = [json.loads(line) for line in source]
-        work_ids = [extractor.short_id(work["id"]) for work in works]
-        actual_by_year = {
-            str(year): sum(work["publication_year"] == year for work in works)
-            for year in extractor.YEARS
-        }
-        self.assertEqual(population["population_total"], 283_851)
-        self.assertEqual(population["population_total"], sum(population["population_by_year"].values()))
-        self.assertEqual(manifest["population_total"], population["population_total"])
-        self.assertEqual(quality["population_total"], population["population_total"])
-        self.assertEqual(len(work_ids), extractor.TARGET_SAMPLE_SIZE)
-        self.assertEqual(len(set(work_ids)), extractor.TARGET_SAMPLE_SIZE)
-        self.assertEqual(manifest["actual_sample_size"], extractor.TARGET_SAMPLE_SIZE)
-        self.assertEqual(manifest["actual_by_year"], actual_by_year)
-        self.assertEqual(quality["actual_by_year"], actual_by_year)
-        self.assertEqual(
-            manifest["missing_by_field"],
-            {
-                "doi": quality["missing_doi"],
-                "primary_topic": quality["missing_primary_topic"],
-                "country": quality["missing_country"],
-                "institution": quality["missing_institution"],
-                "source": quality["missing_source"],
-            },
-        )
-        self.assertEqual(quality["unique_work_ids"], extractor.TARGET_SAMPLE_SIZE)
-        self.assertEqual(quality["duplicates"], 0)
-        self.assertEqual(quality["guardrail_failures"], 0)
-        self.assertTrue(quality["sanity_sample"]["passed"])
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "data/raw/world_bank_country_year.jsonl"
 DEFAULT_MANIFEST = ROOT / "data/raw/world_bank_manifest.json"
-DEFAULT_QUALITY_REPORT = ROOT / "validation/results/world_bank_data_quality.json"
+DEFAULT_QUALITY_REPORT = ROOT / "data/raw/world_bank_data_quality.json"
 
 API_BASE = "https://api.worldbank.org/v2"
 API_VERSION = "v2"
@@ -700,8 +700,8 @@ def extract(
             },
         },
         "pivot_statistics": pivot_stats,
-        "output": str(output_path),
-        "quality_report": str(quality_path),
+        "output": output_path.name,
+        "quality_report": quality_path.name,
     }
 
     # The dataset is published only after all in-memory structural gates pass.

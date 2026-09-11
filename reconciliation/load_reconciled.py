@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import os
 import re
 from collections import Counter
@@ -23,6 +24,10 @@ BATCH_SIZE = 1_000
 # Valid ISO geographies observed in OpenAlex but absent from the frozen WDI extract.
 # Add a row here only when its identity can be established without remapping it.
 OPENALEX_ONLY_GEOGRAPHY_POLICY = {
+    "GF": {"country_code_iso3": "GUF", "country_name": "French Guiana"},
+    "GP": {"country_code_iso3": "GLP", "country_name": "Guadeloupe"},
+    "MQ": {"country_code_iso3": "MTQ", "country_name": "Martinique"},
+    "MS": {"country_code_iso3": "MSR", "country_name": "Montserrat"},
     "RE": {"country_code_iso3": "REU", "country_name": "Réunion"},
     "TW": {"country_code_iso3": "TWN", "country_name": "Taiwan"},
 }
@@ -516,6 +521,18 @@ def _read_openalex(path: Path, data: dict[str, Any]) -> None:
 
 def build_reconciled_data(openalex_path: Path, world_bank_path: Path) -> dict[str, Any]:
     """Read, validate, deduplicate, and reconcile the two source-oriented inputs."""
+    # File integrity is source-agnostic: no corpus-selection rules belong here.
+    source_path = Path(openalex_path)
+    manifest_path = source_path.with_name(source_path.name.replace("_works.jsonl", "_manifest.json"))
+    if manifest_path != source_path and manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("sha256"):
+            digest = hashlib.sha256()
+            with source_path.open("rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(block)
+            if digest.hexdigest() != manifest["sha256"]:
+                raise ReconciliationError("Raw OpenAlex checksum differs from manifest; restore or publish a consistent extraction")
     data = _empty_data()
     _read_world_bank(Path(world_bank_path), data)
     _read_openalex(Path(openalex_path), data)

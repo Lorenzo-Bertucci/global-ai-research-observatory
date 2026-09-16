@@ -6,6 +6,18 @@ secondaryBackgroundColor = "#F3F6F9"
 textColor = "#263746"
 font = "sans serif"
 
+[theme.light]
+primaryColor = "#2E6F9E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F6F9"
+textColor = "#263746"
+
+[theme.dark]
+primaryColor = "#64A7D6"
+backgroundColor = "#0E1720"
+secondaryBackgroundColor = "#121E28"
+textColor = "#E7EDF2"
+
 [browser]
 gatherUsageStats = false
 

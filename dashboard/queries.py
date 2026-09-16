@@ -30,7 +30,7 @@ class FilterState:
     source_types: tuple[str, ...] = ()
     publication_types: tuple[str, ...] = ()
     languages: tuple[str, ...] = ()
-    open_access_statuses: tuple[str, ...] = ()
+    open_access_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,22 @@ def _append_nullable(
     if clause:
         clauses.append(clause)
         params.extend(values)
+
+
+def _open_access_predicate(selected: tuple[str, ...]) -> tuple[str | None, list[Any]]:
+    """Filter the nullable OpenAlex boolean without collapsing NULL into FALSE."""
+    if not selected:
+        return None, []
+    unsupported = set(selected) - {"true", "false", MISSING_VALUE}
+    if unsupported:
+        raise ValueError("Unsupported Open Access filter value")
+    include_missing = MISSING_VALUE in selected
+    concrete = [value == "true" for value in selected if value != MISSING_VALUE]
+    if include_missing and concrete:
+        return "(publication.is_open_access = ANY(%s) OR publication.is_open_access IS NULL)", [concrete]
+    if include_missing:
+        return "publication.is_open_access IS NULL", []
+    return "publication.is_open_access = ANY(%s)", [concrete]
 
 
 def _country_member_filter(
@@ -161,12 +177,12 @@ def filtered_publications_cte(filters: FilterState) -> QuerySpec:
         clauses, params, "publication.publication_type", filters.publication_types
     )
     _append_nullable(clauses, params, "publication.language", filters.languages)
-    _append_nullable(
-        clauses,
-        params,
-        "publication.open_access_status",
-        filters.open_access_statuses,
+    open_access_clause, open_access_params = _open_access_predicate(
+        filters.open_access_values
     )
+    if open_access_clause:
+        clauses.append(open_access_clause)
+        params.extend(open_access_params)
 
     where_sql = " AND\n            ".join(clauses) if clauses else "TRUE"
     return QuerySpec(
@@ -178,7 +194,6 @@ filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -301,14 +316,16 @@ def filter_options() -> QuerySpec:
             SELECT 'language', '{MISSING_VALUE}', '{MISSING_LABEL}', 'zzzz'
             WHERE EXISTS (SELECT 1 FROM dw.fact_publication WHERE language IS NULL)
             UNION ALL
-            SELECT 'open_access_status', open_access_status, open_access_status,
-                   open_access_status
-            FROM (SELECT DISTINCT open_access_status FROM dw.fact_publication
-                  WHERE open_access_status IS NOT NULL) statuses
+            SELECT 'open_access', is_open_access::text,
+                   CASE WHEN is_open_access THEN 'Open Access'
+                        ELSE 'Not Open Access' END,
+                   CASE WHEN is_open_access THEN '1' ELSE '2' END
+            FROM (SELECT DISTINCT is_open_access FROM dw.fact_publication
+                  WHERE is_open_access IS NOT NULL) access_values
             UNION ALL
-            SELECT 'open_access_status', '{MISSING_VALUE}', '{MISSING_LABEL}', 'zzzz'
+            SELECT 'open_access', '{MISSING_VALUE}', '{MISSING_LABEL}', 'zzzz'
             WHERE EXISTS (SELECT 1 FROM dw.fact_publication
-                          WHERE open_access_status IS NULL)
+                          WHERE is_open_access IS NULL)
         ) options
         ORDER BY filter_name, sort_label, value
         """
@@ -381,11 +398,13 @@ def open_access_by_year(filters: FilterState) -> QuerySpec:
         filters,
         f"""
         SELECT calendar_year,
-               coalesce(open_access_status, '{MISSING_LABEL}') AS open_access_status,
+               CASE WHEN is_open_access THEN 'Open Access'
+                    WHEN is_open_access IS FALSE THEN 'Not Open Access'
+                    ELSE '{MISSING_LABEL}' END AS open_access,
                sum(publication_count)::numeric AS publications
         FROM filtered_publications
-        GROUP BY calendar_year, coalesce(open_access_status, '{MISSING_LABEL}')
-        ORDER BY calendar_year, open_access_status
+        GROUP BY calendar_year, is_open_access
+        ORDER BY calendar_year, is_open_access DESC NULLS LAST
         """,
     )
 
@@ -507,11 +526,9 @@ def normalized_country_year(filters: FilterState) -> QuerySpec:
                END AS publications_per_billion_gdp,
                publication.full_publications
         FROM publication_country_year publication
-        LEFT JOIN dw.dim_year year_dim
-          ON year_dim.calendar_year = publication.calendar_year
         LEFT JOIN dw.fact_country_year indicator
           ON indicator.country_key = publication.country_key
-         AND indicator.year_key = year_dim.year_key
+         AND indicator.year = publication.calendar_year
         ORDER BY publication.calendar_year, publication.country_name
         """,
         base.params + tuple(member_params),
@@ -818,13 +835,13 @@ def hierarchy_output(filters: FilterState, counting_method: str, dimension: str,
             WHERE {' AND '.join(clauses) if clauses else 'TRUE'}
             GROUP BY selected.publication_key, selected.calendar_year, {key}, {name}
         ), member_year AS (
-            SELECT member_id, member_name {grouping}, sum(attributed_publications) AS publications
-            FROM publication_member GROUP BY member_id, member_name {grouping}
+            SELECT member_id, member_name{grouping}, sum(attributed_publications) AS publications
+            FROM publication_member GROUP BY member_id, member_name{grouping}
         ), leaders AS (
             SELECT member_id FROM member_year GROUP BY member_id
             ORDER BY sum(publications) DESC, member_id LIMIT %s
         )
-        SELECT member_year.member_id, member_year.member_name {projection}, member_year.publications
+        SELECT member_year.member_id, member_year.member_name{projection}, member_year.publications
         FROM member_year JOIN leaders USING (member_id)
         ORDER BY {'calendar_year,' if evolution else ''} publications DESC, member_name
     """, base.params + tuple(params) + (limit,))
@@ -910,26 +927,28 @@ def country_group_capacity(filters: FilterState, hierarchy: str = "Region") -> Q
     clauses, params = _country_member_filter(filters)
     year_clauses = []
     if filters.start_year is not None:
-        year_clauses.append("year_dim.calendar_year >= %s")
+        year_clauses.append("year_coordinate.calendar_year >= %s")
         params.append(filters.start_year)
     if filters.end_year is not None:
-        year_clauses.append("year_dim.calendar_year <= %s")
+        year_clauses.append("year_coordinate.calendar_year <= %s")
         params.append(filters.end_year)
     where = ' AND '.join(clauses + year_clauses) or 'TRUE'
     return QuerySpec(f"""
-        WITH {base.sql}, country_output AS (
+        WITH {base.sql}, year_coordinates AS (
+            SELECT DISTINCT year AS calendar_year FROM dw.fact_country_year
+        ), country_output AS (
             SELECT country_key, calendar_year, sum(fractional_weight) AS fractional_publications
             FROM filtered_publications JOIN dw.bridge_publication_country USING (publication_key)
             GROUP BY country_key, calendar_year
         ), country_year AS (
             SELECT country.country_key, country.{attribute} AS member,
-                   year_dim.calendar_year, coalesce(output.fractional_publications, 0) AS fractional_publications,
+                   year_coordinate.calendar_year, coalesce(output.fractional_publications, 0) AS fractional_publications,
                    indicator.population, indicator.gdp_current_usd
-            FROM dw.dim_country country CROSS JOIN dw.dim_year year_dim
+            FROM dw.dim_country country CROSS JOIN year_coordinates year_coordinate
             LEFT JOIN country_output output ON output.country_key = country.country_key
-                AND output.calendar_year = year_dim.calendar_year
+                AND output.calendar_year = year_coordinate.calendar_year
             LEFT JOIN dw.fact_country_year indicator ON indicator.country_key = country.country_key
-                AND indicator.year_key = year_dim.year_key
+                AND indicator.year = year_coordinate.calendar_year
             WHERE {where}
         ), group_publication AS (
             SELECT country.{attribute} AS member, selected.calendar_year, selected.publication_key

@@ -57,8 +57,7 @@ CREATE TABLE reconciled.r_work (
         CHECK (cited_by_count IS NULL OR cited_by_count >= 0),
     primary_topic_id TEXT REFERENCES reconciled.r_topic (topic_id),
     source_id TEXT REFERENCES reconciled.r_source (source_id),
-    is_open_access BOOLEAN,
-    open_access_status TEXT
+    is_open_access BOOLEAN
 );
 
 CREATE TABLE reconciled.r_work_topic (

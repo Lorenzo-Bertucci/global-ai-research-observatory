@@ -34,8 +34,10 @@ from dashboard.views import (  # noqa: E402
 
 def main() -> None:
     configure_page()
-    st.sidebar.markdown("## Observatory")
-    page = st.sidebar.radio("Analysis", PAGES, label_visibility="collapsed")
+    st.sidebar.markdown("### Navigation")
+    page = st.sidebar.selectbox(
+        "Page", PAGES, label_visibility="collapsed", key="navigation_page"
+    )
 
     check = run(queries.warehouse_check())
     if check.empty or not bool(check.iloc[0].get("publication_ready")) or not bool(
@@ -58,33 +60,15 @@ def main() -> None:
     )
 
     st.title("Global AI Research Observatory")
-    st.caption("Corpus: OpenAlex Primary Topic in the Artificial Intelligence subfield · All associated topics retained.")
-    manifest_path = ROOT / "data/raw/openalex_ai_manifest.json"
-    if manifest_path.exists():
-        import json
-        try:
-            manifest = json.loads(manifest_path.read_text())
-            if manifest.get("actual_total"):
-                st.info(
-                    "Results are based on a reproducible 50,000-work stratified "
-                    "sample of OpenAlex publications whose Primary Topic belongs "
-                    "to the Artificial Intelligence subfield.",
-                    icon="ℹ️",
-                )
-            else:
-                st.warning(
-                    "The local raw generation predates the final direct-sample "
-                    "manifest. Rebuild and reload before interpreting results."
-                )
-        except (ValueError, TypeError, OSError):
-            st.warning("Corpus completeness metadata is unavailable.")
     st.markdown(
-        '<div class="observatory-subtitle">Interactive Data Warehouse Explorer</div>',
+        '<div class="observatory-subtitle">A multidimensional data warehouse for '
+        "analyzing global AI research</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        f'<div class="context-line">{filters.start_year}–{filters.end_year} · '
-        f'{active_filters} categorical filter(s) · {counting_method} counting</div>',
+        f'<div class="context-line">Publication years {filters.start_year}–'
+        f'{filters.end_year} · {active_filters} active categorical filter(s) · '
+        f'Global attribution: {counting_method}</div>',
         unsafe_allow_html=True,
     )
 

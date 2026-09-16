@@ -18,7 +18,7 @@ try:
     import psycopg
     from psycopg import sql
     from psycopg.conninfo import make_conninfo
-    from psycopg.errors import ForeignKeyViolation
+    from psycopg.errors import ForeignKeyViolation, UniqueViolation
 except ImportError:
     psycopg = None
 
@@ -102,6 +102,7 @@ def work(
     topics,
     authorships,
     publication_source,
+    is_open_access=True,
 ):
     return {
         "id": f"https://openalex.org/{work_id}",
@@ -119,7 +120,14 @@ def work(
         "primary_location": {"source": publication_source}
         if publication_source is not None
         else None,
-        "open_access": {"is_oa": True, "oa_status": "gold"},
+        "open_access": (
+            None
+            if is_open_access is None
+            else {
+                "is_oa": is_open_access,
+                "oa_status": "gold" if is_open_access else "closed",
+            }
+        ),
     }
 
 
@@ -194,6 +202,7 @@ class WarehouseLoadTests(unittest.TestCase):
                     )
                 ],
                 None,
+                False,
             ),
             work(
                 "W3",
@@ -208,6 +217,7 @@ class WarehouseLoadTests(unittest.TestCase):
                     )
                 ],
                 source(),
+                None,
             ),
         ]
         # Keep a non-rank-1 primary topic to verify that the DW preserves the
@@ -244,7 +254,7 @@ class WarehouseLoadTests(unittest.TestCase):
                 for table in reconciler.LOAD_ORDER
             }
 
-    def test_schema_surrogate_keys_date_and_publication_grain(self):
+    def test_schema_degenerate_year_coordinate_and_publication_grain(self):
         counts = warehouse.load_dw(self.database_url)
         self.assertEqual(counts["fact_publication"], 3)
         with psycopg.connect(self.database_url) as connection:
@@ -256,8 +266,8 @@ class WarehouseLoadTests(unittest.TestCase):
                 )
             }
             self.assertEqual(tables, set(warehouse.DW_TABLES))
+            self.assertNotIn("dim_" + "year", tables)
             for table, key in (
-                ("dim_year", "year_key"),
                 ("dim_country", "country_key"),
                 ("dim_topic", "topic_key"),
                 ("dim_institution", "institution_key"),
@@ -270,6 +280,52 @@ class WarehouseLoadTests(unittest.TestCase):
                 ).fetchone()
                 self.assertEqual(row_count, unique_keys)
                 self.assertGreater(minimum_key, 0)
+
+            country_year_columns = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'dw' AND table_name = 'fact_country_year'"
+                )
+            }
+            self.assertIn("year", country_year_columns)
+            self.assertNotIn("year_" + "key", country_year_columns)
+            publication_columns = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'dw' AND table_name = 'fact_publication'"
+                )
+            }
+            self.assertIn("is_open_access", publication_columns)
+            self.assertNotIn("open_access_" + "status", publication_columns)
+
+            country_year_unique = connection.execute(
+                "SELECT count(*) FROM pg_constraint constraint_row "
+                "JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid "
+                "JOIN pg_namespace schema_row ON schema_row.oid = table_row.relnamespace "
+                "WHERE schema_row.nspname = 'dw' "
+                "AND table_row.relname = 'fact_country_year' "
+                "AND constraint_row.contype = 'u' "
+                "AND pg_get_constraintdef(constraint_row.oid) = 'UNIQUE (country_key, year)'"
+            ).fetchone()[0]
+            self.assertEqual(country_year_unique, 1)
+
+            stale_year_fks = connection.execute(
+                "SELECT count(*) FROM pg_constraint WHERE contype = 'f' "
+                "AND confrelid = to_regclass('dw.' || 'dim_' || 'year')"
+            ).fetchone()[0]
+            self.assertEqual(stale_year_fks, 0)
+
+            direct_multivalue_fks = connection.execute(
+                "SELECT count(*) FROM pg_constraint constraint_row "
+                "WHERE constraint_row.conrelid = to_regclass('dw.fact_publication') "
+                "AND constraint_row.contype = 'f' "
+                "AND constraint_row.confrelid IN ("
+                "to_regclass('dw.dim_topic'), to_regclass('dw.dim_country'), "
+                "to_regclass('dw.dim_institution'))"
+            ).fetchone()[0]
+            self.assertEqual(direct_multivalue_fks, 0)
 
             date_row = connection.execute(
                 "SELECT date_key, day_of_month, month_number, quarter_number, calendar_year "
@@ -291,6 +347,14 @@ class WarehouseLoadTests(unittest.TestCase):
             self.assertEqual([row[3] for row in publications], [10, 4, 2])
             self.assertIsNotNone(publications[0][4])
             self.assertIsNone(publications[1][4])
+
+            access_values = connection.execute(
+                "SELECT openalex_work_id, is_open_access FROM dw.fact_publication "
+                "ORDER BY openalex_work_id"
+            ).fetchall()
+            self.assertEqual(
+                [row[1] for row in access_values], [True, False, None]
+            )
 
     def test_dimensions_bridges_country_coverage_and_missing_indicators(self):
         counts = warehouse.load_dw(self.database_url)
@@ -322,10 +386,24 @@ class WarehouseLoadTests(unittest.TestCase):
                 connection.execute(
                     "SELECT fact.internet_users_pct FROM dw.fact_country_year fact "
                     "JOIN dw.dim_country country ON country.country_key = fact.country_key "
-                    "JOIN dw.dim_year year_dim ON year_dim.year_key = fact.year_key "
                     "WHERE country.country_code_iso2 = 'IT' "
-                    "AND year_dim.calendar_year = 2023"
+                    "AND fact.year = 2023"
                 ).fetchone()[0]
+            )
+
+            self.assertEqual(
+                connection.execute(
+                    "SELECT count(*) FROM (SELECT country_key, year "
+                    "FROM dw.fact_country_year GROUP BY country_key, year "
+                    "HAVING count(*) > 1) duplicates"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT min(year), max(year) FROM dw.fact_country_year"
+                ).fetchone(),
+                (2022, 2023),
             )
             topic_hierarchy = connection.execute(
                 "SELECT subfield_name, field_name, domain_name FROM dw.dim_topic "
@@ -375,6 +453,19 @@ class WarehouseLoadTests(unittest.TestCase):
                     "INSERT INTO dw.bridge_publication_country "
                     "(publication_key, country_key, fractional_weight) "
                     "VALUES (-1, -1, 1)"
+                )
+
+    def test_country_year_unique_constraint_rejects_duplicate_grain(self):
+        warehouse.load_dw(self.database_url)
+        with psycopg.connect(self.database_url) as connection:
+            country_key = connection.execute(
+                "SELECT country_key FROM dw.dim_country WHERE country_code_iso2 = 'IT'"
+            ).fetchone()[0]
+            with self.assertRaises(UniqueViolation), connection.transaction():
+                connection.execute(
+                    "INSERT INTO dw.fact_country_year (country_key, year) "
+                    "VALUES (%s, 2022)",
+                    (country_key,),
                 )
 
     def test_idempotency_and_reconciled_immutability(self):
@@ -459,11 +550,10 @@ class WarehouseLoadTests(unittest.TestCase):
         with psycopg.connect(self.database_url) as connection:
             connection.execute(
                 "UPDATE dw.fact_country_year fact SET population = 0, gdp_current_usd = 0 "
-                "FROM dw.dim_country country, dw.dim_year year_dim "
+                "FROM dw.dim_country country "
                 "WHERE country.country_key = fact.country_key "
-                "AND year_dim.year_key = fact.year_key "
                 "AND country.country_code_iso2 = 'IT' "
-                "AND year_dim.calendar_year = 2022"
+                "AND fact.year = 2022"
             )
             zero_denominator_rows = connection.execute(statements[6]).fetchall()
         italy_2022 = next(

@@ -13,7 +13,6 @@ DEFAULT_SCHEMA = Path(__file__).with_name("schema.sql")
 
 DW_TABLES = (
     "dim_date",
-    "dim_year",
     "dim_country",
     "dim_topic",
     "dim_institution",
@@ -35,7 +34,6 @@ REQUIRED_RECONCILED_COLUMNS = {
         "primary_topic_id",
         "source_id",
         "is_open_access",
-        "open_access_status",
     },
     "r_topic": {
         "topic_id",
@@ -104,15 +102,6 @@ LOAD_STATEMENTS = (
         """,
     ),
     (
-        "dim_year",
-        """
-        INSERT INTO dw.dim_year (calendar_year)
-        SELECT DISTINCT year
-        FROM reconciled.r_country_year_indicator
-        ORDER BY year
-        """,
-    ),
-    (
         "dim_country",
         """
         INSERT INTO dw.dim_country (
@@ -170,7 +159,7 @@ LOAD_STATEMENTS = (
         """
         INSERT INTO dw.fact_publication (
             openalex_work_id, date_key, source_key, publication_type,
-            language, is_open_access, open_access_status,
+            language, is_open_access,
             publication_count, citation_count
         )
         SELECT
@@ -180,7 +169,6 @@ LOAD_STATEMENTS = (
             work.work_type,
             work.language,
             work.is_open_access,
-            work.open_access_status,
             1,
             work.cited_by_count
         FROM reconciled.r_work work
@@ -195,13 +183,13 @@ LOAD_STATEMENTS = (
         "fact_country_year",
         """
         INSERT INTO dw.fact_country_year (
-            country_key, year_key, population, gdp_current_usd,
+            country_key, year, population, gdp_current_usd,
             gdp_per_capita_current_usd, internet_users_pct,
             rd_expenditure_pct_gdp
         )
         SELECT
             country_dim.country_key,
-            year_dim.year_key,
+            indicator.year,
             indicator.population,
             indicator.gdp_current_usd,
             indicator.gdp_per_capita_current_usd,
@@ -210,8 +198,6 @@ LOAD_STATEMENTS = (
         FROM reconciled.r_country_year_indicator indicator
         JOIN dw.dim_country country_dim
             ON country_dim.country_code_iso2 = indicator.country_code_iso2
-        JOIN dw.dim_year year_dim
-            ON year_dim.calendar_year = indicator.year
         ORDER BY indicator.country_code_iso2, indicator.year
         """,
     ),
@@ -318,10 +304,6 @@ def _run_post_load_checks(connection: Any) -> dict[str, int]:
             "SELECT count(DISTINCT publication_date) FROM reconciled.r_work "
             "WHERE publication_date IS NOT NULL",
         ),
-        "dim_year": _scalar(
-            connection,
-            "SELECT count(DISTINCT year) FROM reconciled.r_country_year_indicator",
-        ),
         "dim_country": _scalar(connection, "SELECT count(*) FROM reconciled.r_country"),
         "dim_topic": _scalar(connection, "SELECT count(*) FROM reconciled.r_topic"),
         "dim_institution": _scalar(
@@ -354,10 +336,6 @@ def _run_post_load_checks(connection: Any) -> dict[str, int]:
             "SELECT count(*) FROM (SELECT full_date FROM dw.dim_date "
             "GROUP BY full_date HAVING count(*) > 1) duplicates"
         ),
-        "dim_year.calendar_year": (
-            "SELECT count(*) FROM (SELECT calendar_year FROM dw.dim_year "
-            "GROUP BY calendar_year HAVING count(*) > 1) duplicates"
-        ),
         "dim_country.iso2": (
             "SELECT count(*) FROM (SELECT country_code_iso2 FROM dw.dim_country "
             "GROUP BY country_code_iso2 HAVING count(*) > 1) duplicates"
@@ -379,8 +357,8 @@ def _run_post_load_checks(connection: Any) -> dict[str, int]:
             "GROUP BY openalex_work_id HAVING count(*) > 1) duplicates"
         ),
         "fact_country_year.grain": (
-            "SELECT count(*) FROM (SELECT country_key, year_key FROM dw.fact_country_year "
-            "GROUP BY country_key, year_key HAVING count(*) > 1) duplicates"
+            "SELECT count(*) FROM (SELECT country_key, year FROM dw.fact_country_year "
+            "GROUP BY country_key, year HAVING count(*) > 1) duplicates"
         ),
         "bridge_publication_topic.grain": (
             "SELECT count(*) FROM (SELECT publication_key, topic_key "
@@ -407,9 +385,16 @@ def _run_post_load_checks(connection: Any) -> dict[str, int]:
         "SELECT count(*) FROM dw.fact_publication publication "
         "JOIN reconciled.r_work work ON work.work_id = publication.openalex_work_id "
         "WHERE publication.publication_count <> 1 "
-        "OR publication.citation_count IS DISTINCT FROM work.cited_by_count",
+        "OR publication.citation_count IS DISTINCT FROM work.cited_by_count "
+        "OR publication.is_open_access IS DISTINCT FROM work.is_open_access",
     ):
-        raise WarehouseError("Publication measures differ from reconciled works")
+        raise WarehouseError("Publication measures or Open Access flag differ from reconciled works")
+
+    if _scalar(
+        connection,
+        "SELECT count(*) FROM dw.fact_country_year WHERE year NOT BETWEEN 2018 AND 2025",
+    ):
+        raise WarehouseError("Country-year coordinates fall outside 2018–2025")
 
     if _scalar(
         connection,
@@ -436,10 +421,9 @@ def _run_post_load_checks(connection: Any) -> dict[str, int]:
         connection,
         "SELECT count(*) FROM dw.fact_country_year fact "
         "JOIN dw.dim_country country ON country.country_key = fact.country_key "
-        "JOIN dw.dim_year year_dim ON year_dim.year_key = fact.year_key "
         "JOIN reconciled.r_country_year_indicator source "
         "ON source.country_code_iso2 = country.country_code_iso2 "
-        "AND source.year = year_dim.calendar_year "
+        "AND source.year = fact.year "
         "WHERE fact.population IS DISTINCT FROM source.population "
         "OR fact.gdp_current_usd IS DISTINCT FROM source.gdp_current_usd "
         "OR fact.gdp_per_capita_current_usd IS DISTINCT FROM source.gdp_per_capita_current_usd "
@@ -459,8 +443,7 @@ def _run_post_load_checks(connection: Any) -> dict[str, int]:
         "fact_country_year": (
             "SELECT count(*) FROM dw.fact_country_year fact "
             "LEFT JOIN dw.dim_country country ON country.country_key = fact.country_key "
-            "LEFT JOIN dw.dim_year year_dim ON year_dim.year_key = fact.year_key "
-            "WHERE country.country_key IS NULL OR year_dim.year_key IS NULL"
+            "WHERE country.country_key IS NULL"
         ),
         "bridge_publication_topic": (
             "SELECT count(*) FROM dw.bridge_publication_topic bridge "

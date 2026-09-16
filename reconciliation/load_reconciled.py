@@ -71,7 +71,6 @@ WORK_FIELDS = (
     "primary_topic_id",
     "source_id",
     "is_open_access",
-    "open_access_status",
 )
 INDICATOR_FIELDS = (
     "country_code_iso2",
@@ -479,9 +478,6 @@ def _read_openalex(path: Path, data: dict[str, Any]) -> None:
             primary_topic_id,
             source_id,
             _boolean(open_access.get("is_oa"), f"{prefix}.open_access.is_oa")
-            if open_access
-            else None,
-            _text(open_access.get("oa_status"), f"{prefix}.open_access.oa_status")
             if open_access
             else None,
         )

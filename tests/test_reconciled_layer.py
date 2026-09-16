@@ -279,13 +279,13 @@ class ReconciledLayerTests(unittest.TestCase):
             }
             self.assertEqual(tables, set(reconciler.LOAD_ORDER))
             work_row = connection.execute(
-                "SELECT cited_by_count, primary_topic_id, source_id, is_open_access, "
-                "open_access_status FROM reconciled.r_work WHERE work_id = %s",
+                "SELECT cited_by_count, primary_topic_id, source_id, is_open_access "
+                "FROM reconciled.r_work WHERE work_id = %s",
                 ("https://openalex.org/W1",),
             ).fetchone()
             self.assertEqual(
                 work_row,
-                (42, "https://openalex.org/T1", "https://openalex.org/S1", True, "gold"),
+                (42, "https://openalex.org/T1", "https://openalex.org/S1", True),
             )
             optional = connection.execute(
                 "SELECT doi, source_id, primary_topic_id FROM reconciled.r_work "
@@ -293,6 +293,7 @@ class ReconciledLayerTests(unittest.TestCase):
                 ("https://openalex.org/W3",),
             ).fetchone()
             self.assertEqual(optional, (None, None, None))
+
             topic_rows = connection.execute(
                 "SELECT topic_id, topic_rank, topic_score FROM reconciled.r_work_topic "
                 "WHERE work_id = %s ORDER BY topic_rank",
@@ -327,6 +328,19 @@ class ReconciledLayerTests(unittest.TestCase):
                 "FROM reconciled.r_country_year_indicator WHERE country_code_iso2 = 'US'"
             ).fetchone()
             self.assertEqual(us_indicators, (None, None, None))
+
+    def test_open_access_boolean_preserves_true_false_and_null(self):
+        true_work = work("W1")
+        false_work = work("W2")
+        false_work["open_access"] = {"is_oa": False, "oa_status": "closed"}
+        unknown_work = work("W3")
+        unknown_work["open_access"] = None
+        self.load([true_work, false_work, unknown_work])
+        with psycopg.connect(self.database_url) as connection:
+            values = connection.execute(
+                "SELECT is_open_access FROM reconciled.r_work ORDER BY work_id"
+            ).fetchall()
+        self.assertEqual(values, [(True,), (False,), (None,)])
 
     def test_primary_topic_must_be_one_of_the_work_topics(self):
         with self.assertRaisesRegex(

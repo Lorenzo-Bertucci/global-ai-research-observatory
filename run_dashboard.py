@@ -72,7 +72,6 @@ def preflight(dsn: str | None = None) -> dict[str, object]:
         "dw.fact_publication",
         "dw.fact_country_year",
         "dw.dim_date",
-        "dw.dim_year",
         "dw.dim_country",
         "dw.dim_topic",
         "dw.bridge_publication_topic",
@@ -97,6 +96,26 @@ def preflight(dsn: str | None = None) -> dict[str, object]:
                 raise PreflightError(
                     "Missing warehouse tables: " + ", ".join(missing)
                 )
+            if connection.execute(
+                "SELECT to_regclass('dw.' || 'dim_' || 'year') IS NOT NULL"
+            ).fetchone()[0]:
+                raise PreflightError("Obsolete year dimension is still present.")
+            columns = {
+                (table, column)
+                for table, column in connection.execute(
+                    "SELECT table_name, column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'dw' "
+                    "AND table_name IN ('fact_publication', 'fact_country_year')"
+                )
+            }
+            if ("fact_country_year", "year") not in columns:
+                raise PreflightError("dw.fact_country_year.year is missing.")
+            if ("fact_country_year", "year_" + "key") in columns:
+                raise PreflightError("Obsolete surrogate year column is still present.")
+            if ("fact_publication", "is_open_access") not in columns:
+                raise PreflightError("dw.fact_publication.is_open_access is missing.")
+            if ("fact_publication", "open_access_" + "status") in columns:
+                raise PreflightError("Obsolete categorical Open Access column is present.")
             publications = connection.execute(
                 "SELECT count(*) FROM dw.fact_publication"
             ).fetchone()[0]
@@ -105,11 +124,13 @@ def preflight(dsn: str | None = None) -> dict[str, object]:
             years = [
                 row[0]
                 for row in connection.execute(
-                    "SELECT calendar_year FROM dw.dim_year ORDER BY calendar_year"
+                    "SELECT DISTINCT year FROM dw.fact_country_year ORDER BY year"
                 )
             ]
             if not set(range(2018, 2026)).issubset(years):
-                raise PreflightError("dw.dim_year does not include 2018–2025.")
+                raise PreflightError(
+                    "dw.fact_country_year does not include years 2018–2025."
+                )
             for bridge in (
                 "bridge_publication_topic",
                 "bridge_publication_country",

@@ -110,11 +110,9 @@ SELECT
             / indicator.gdp_current_usd
     END AS publications_per_billion_usd_gdp
 FROM publication_country_year
-LEFT JOIN dw.dim_year year_dim
-    ON year_dim.calendar_year = publication_country_year.calendar_year
 LEFT JOIN dw.fact_country_year indicator
     ON indicator.country_key = publication_country_year.country_key
-    AND indicator.year_key = year_dim.year_key
+    AND indicator.year = publication_country_year.calendar_year
 ORDER BY
     publication_country_year.calendar_year,
     publication_country_year.country_code_iso2;

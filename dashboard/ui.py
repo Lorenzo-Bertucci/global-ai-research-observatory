@@ -21,16 +21,27 @@ PALETTE = [BLUE, TEAL, GOLD, "#765D93", "#B65F5A", "#577590", "#7A9E62"]
 def apply_figure_style(figure: go.Figure, height: int = 410) -> go.Figure:
     figure.update_layout(
         height=height,
-        margin=dict(l=10, r=15, t=55, b=15),
+        margin=dict(l=10, r=15, t=82, b=15),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, system-ui, sans-serif", color="#263746", size=13),
-        title=dict(font=dict(size=18, color=NAVY), x=0),
+        font=dict(family="Inter, system-ui, sans-serif", size=13),
+        title=dict(font=dict(size=18), x=0),
         colorway=PALETTE,
-        legend=dict(title=None, orientation="h", yanchor="bottom", y=1.02, x=0),
-        hoverlabel=dict(bgcolor="white", font_size=13),
+        legend=dict(
+            title=None,
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        hoverlabel=dict(font_size=13),
     )
-    figure.update_xaxes(showgrid=True, gridcolor="rgba(41,67,89,.10)", zeroline=False)
+    figure.update_xaxes(
+        showgrid=True,
+        gridcolor="rgba(127,127,127,.16)",
+        zeroline=False,
+    )
     figure.update_yaxes(showgrid=False, zeroline=False)
     return figure
 

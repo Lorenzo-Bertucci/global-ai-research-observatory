@@ -10,11 +10,6 @@ CREATE TABLE dw.dim_date (
     calendar_year SMALLINT NOT NULL CHECK (calendar_year BETWEEN 1 AND 9999)
 );
 
-CREATE TABLE dw.dim_year (
-    year_key INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    calendar_year SMALLINT NOT NULL UNIQUE CHECK (calendar_year BETWEEN 1 AND 9999)
-);
-
 CREATE TABLE dw.dim_country (
     country_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     country_code_iso2 TEXT NOT NULL UNIQUE
@@ -66,7 +61,6 @@ CREATE TABLE dw.fact_publication (
     publication_type TEXT,
     language TEXT,
     is_open_access BOOLEAN,
-    open_access_status TEXT,
     publication_count SMALLINT NOT NULL DEFAULT 1 CHECK (publication_count = 1),
     citation_count BIGINT CHECK (citation_count IS NULL OR citation_count >= 0)
 );
@@ -74,13 +68,13 @@ CREATE TABLE dw.fact_publication (
 CREATE TABLE dw.fact_country_year (
     country_year_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     country_key BIGINT NOT NULL REFERENCES dw.dim_country (country_key),
-    year_key INTEGER NOT NULL REFERENCES dw.dim_year (year_key),
+    year SMALLINT NOT NULL CHECK (year BETWEEN 1 AND 9999),
     population BIGINT,
     gdp_current_usd NUMERIC,
     gdp_per_capita_current_usd NUMERIC,
     internet_users_pct NUMERIC,
     rd_expenditure_pct_gdp NUMERIC,
-    UNIQUE (country_key, year_key)
+    UNIQUE (country_key, year)
 );
 
 CREATE TABLE dw.bridge_publication_topic (
@@ -112,7 +106,7 @@ CREATE TABLE dw.bridge_publication_institution (
 
 CREATE INDEX dim_date_year_idx ON dw.dim_date (calendar_year);
 CREATE INDEX fact_publication_date_idx ON dw.fact_publication (date_key);
-CREATE INDEX fact_country_year_year_idx ON dw.fact_country_year (year_key);
+CREATE INDEX fact_country_year_year_idx ON dw.fact_country_year (year);
 CREATE INDEX bridge_publication_topic_topic_idx
     ON dw.bridge_publication_topic (topic_key);
 CREATE INDEX bridge_publication_country_country_idx

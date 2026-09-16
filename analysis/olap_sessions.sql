@@ -5,253 +5,7 @@
 -- Results describe the reproducible year-stratified OpenAlex sample, not the complete population; inspect the raw manifest.
 BEGIN TRANSACTION READ ONLY;
 
--- SESSION 1: Absolute vs normalized geographic leadership
--- Question: Does leadership change after accounting for country size and economic capacity?
--- Navigation: Full participation: one publication per participating country
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-        SELECT country.country_code_iso2,
-               country.country_code_iso3,
-               coalesce(country.country_name, country.country_code_iso2) AS country_name,
-               country.region_name,
-               country.income_level_name,
-               country.has_world_bank_data,
-               sum(selected.publication_count)::numeric AS publications
-        FROM filtered_publications selected
-        JOIN dw.bridge_publication_country bridge
-          ON bridge.publication_key = selected.publication_key
-        JOIN dw.dim_country country ON country.country_key = bridge.country_key
-        WHERE TRUE
-        GROUP BY country.country_key, country.country_code_iso2,
-                 country.country_code_iso3, country.country_name,
-                 country.region_name, country.income_level_name,
-                 country.has_world_bank_data
-        ORDER BY publications DESC NULLS LAST, country_name
-        LIMIT 30;
--- Navigation: Fractional attribution: original country weights
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-        SELECT country.country_code_iso2,
-               country.country_code_iso3,
-               coalesce(country.country_name, country.country_code_iso2) AS country_name,
-               country.region_name,
-               country.income_level_name,
-               country.has_world_bank_data,
-               sum(selected.publication_count * bridge.fractional_weight)::numeric AS publications
-        FROM filtered_publications selected
-        JOIN dw.bridge_publication_country bridge
-          ON bridge.publication_key = selected.publication_key
-        JOIN dw.dim_country country ON country.country_key = bridge.country_key
-        WHERE TRUE
-        GROUP BY country.country_key, country.country_code_iso2,
-                 country.country_code_iso3, country.country_name,
-                 country.region_name, country.income_level_name,
-                 country.has_world_bank_data
-        ORDER BY publications DESC NULLS LAST, country_name
-        LIMIT 30;
--- Navigation: Drill to Country x Year, then across WDI; NULL denominators have no rank
-WITH country_year AS (
-        WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-),
-        publication_country_year AS (
-            SELECT country.country_key,
-                   country.country_code_iso2,
-                   country.country_code_iso3,
-                   coalesce(country.country_name, country.country_code_iso2) AS country_name,
-                   country.region_name,
-                   country.income_level_name,
-                   country.has_world_bank_data,
-                   selected.calendar_year,
-                   sum(selected.publication_count) AS full_publications,
-                   sum(selected.publication_count * bridge.fractional_weight)::numeric
-                       AS fractional_publications
-            FROM filtered_publications selected
-            JOIN dw.bridge_publication_country bridge
-              ON bridge.publication_key = selected.publication_key
-            JOIN dw.dim_country country ON country.country_key = bridge.country_key
-            WHERE TRUE
-            GROUP BY country.country_key, country.country_code_iso2,
-                     country.country_code_iso3, country.country_name,
-                     country.region_name, country.income_level_name,
-                     country.has_world_bank_data, selected.calendar_year
-        )
-        SELECT publication.country_code_iso2,
-               publication.country_code_iso3,
-               publication.country_name,
-               publication.region_name,
-               publication.income_level_name,
-               publication.has_world_bank_data,
-               publication.calendar_year,
-               publication.fractional_publications,
-               indicator.population,
-               indicator.gdp_current_usd,
-               indicator.gdp_per_capita_current_usd,
-               indicator.internet_users_pct,
-               indicator.rd_expenditure_pct_gdp,
-               CASE WHEN indicator.population IS NULL OR indicator.population = 0
-                    THEN NULL
-                    ELSE publication.fractional_publications * 1000000::numeric
-                         / indicator.population
-               END AS publications_per_million,
-               CASE WHEN indicator.gdp_current_usd IS NULL OR indicator.gdp_current_usd = 0
-                    THEN NULL
-                    ELSE publication.fractional_publications * 1000000000::numeric
-                         / indicator.gdp_current_usd
-               END AS publications_per_billion_gdp,
-               publication.full_publications
-        FROM publication_country_year publication
-        LEFT JOIN dw.dim_year year_dim
-          ON year_dim.calendar_year = publication.calendar_year
-        LEFT JOIN dw.fact_country_year indicator
-          ON indicator.country_key = publication.country_key
-         AND indicator.year_key = year_dim.year_key
-        ORDER BY publication.calendar_year, publication.country_name
-        ), ranked AS (
-            SELECT *, rank() OVER (PARTITION BY calendar_year ORDER BY fractional_publications DESC) AS absolute_rank,
-                   CASE WHEN publications_per_million IS NOT NULL THEN
-                       rank() OVER (PARTITION BY calendar_year ORDER BY publications_per_million DESC NULLS LAST)
-                   END AS per_million_rank,
-                   CASE WHEN publications_per_billion_gdp IS NOT NULL THEN
-                       rank() OVER (PARTITION BY calendar_year ORDER BY publications_per_billion_gdp DESC NULLS LAST)
-                   END AS per_gdp_rank
-            FROM country_year
-        )
-        SELECT *, absolute_rank - per_million_rank AS population_rank_shift,
-                  absolute_rank - per_gdp_rank AS gdp_rank_shift
-        FROM ranked ORDER BY calendar_year, absolute_rank, country_code_iso2;
-
--- SESSION 2: R&D investment vs research intensity
--- Question: Is reported R&D expenditure associated with fractional publications per million?
--- Navigation: Country x Year pairs: retain NULL R&D values; associations are not causal
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-),
-        publication_country_year AS (
-            SELECT country.country_key,
-                   country.country_code_iso2,
-                   country.country_code_iso3,
-                   coalesce(country.country_name, country.country_code_iso2) AS country_name,
-                   country.region_name,
-                   country.income_level_name,
-                   country.has_world_bank_data,
-                   selected.calendar_year,
-                   sum(selected.publication_count) AS full_publications,
-                   sum(selected.publication_count * bridge.fractional_weight)::numeric
-                       AS fractional_publications
-            FROM filtered_publications selected
-            JOIN dw.bridge_publication_country bridge
-              ON bridge.publication_key = selected.publication_key
-            JOIN dw.dim_country country ON country.country_key = bridge.country_key
-            WHERE TRUE
-            GROUP BY country.country_key, country.country_code_iso2,
-                     country.country_code_iso3, country.country_name,
-                     country.region_name, country.income_level_name,
-                     country.has_world_bank_data, selected.calendar_year
-        )
-        SELECT publication.country_code_iso2,
-               publication.country_code_iso3,
-               publication.country_name,
-               publication.region_name,
-               publication.income_level_name,
-               publication.has_world_bank_data,
-               publication.calendar_year,
-               publication.fractional_publications,
-               indicator.population,
-               indicator.gdp_current_usd,
-               indicator.gdp_per_capita_current_usd,
-               indicator.internet_users_pct,
-               indicator.rd_expenditure_pct_gdp,
-               CASE WHEN indicator.population IS NULL OR indicator.population = 0
-                    THEN NULL
-                    ELSE publication.fractional_publications * 1000000::numeric
-                         / indicator.population
-               END AS publications_per_million,
-               CASE WHEN indicator.gdp_current_usd IS NULL OR indicator.gdp_current_usd = 0
-                    THEN NULL
-                    ELSE publication.fractional_publications * 1000000000::numeric
-                         / indicator.gdp_current_usd
-               END AS publications_per_billion_gdp,
-               publication.full_publications
-        FROM publication_country_year publication
-        LEFT JOIN dw.dim_year year_dim
-          ON year_dim.calendar_year = publication.calendar_year
-        LEFT JOIN dw.fact_country_year indicator
-          ON indicator.country_key = publication.country_key
-         AND indicator.year_key = year_dim.year_key
-        ORDER BY publication.calendar_year, publication.country_name;
-
--- SESSION 3: Research evolution / post-2022
+-- SESSION 1: Research Growth
 -- Question: Does observed publication output show acceleration after 2022?
 -- Navigation: Roll up to Year; adjacent-period growth, no growth from zero base
 WITH filtered_publications AS (
@@ -261,7 +15,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -301,7 +54,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -341,7 +93,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -381,7 +132,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -400,7 +150,7 @@ SELECT calendar_year,
         FROM filtered_publications
         GROUP BY calendar_year, coalesce(publication_type, 'Missing / unavailable')
         ORDER BY calendar_year, publication_type;
--- Navigation: Slice by Open Access status and year
+-- Navigation: Slice by Open Access boolean and year
 WITH filtered_publications AS (
     SELECT
         publication.publication_key,
@@ -408,7 +158,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -422,13 +171,243 @@ WITH filtered_publications AS (
             date_dim.calendar_year <= 2025
 )
 SELECT calendar_year,
-               coalesce(open_access_status, 'Missing / unavailable') AS open_access_status,
+               CASE WHEN is_open_access THEN 'Open Access'
+                    WHEN is_open_access IS FALSE THEN 'Not Open Access'
+                    ELSE 'Missing / unavailable' END AS open_access,
                sum(publication_count)::numeric AS publications
         FROM filtered_publications
-        GROUP BY calendar_year, coalesce(open_access_status, 'Missing / unavailable')
-        ORDER BY calendar_year, open_access_status;
+        GROUP BY calendar_year, is_open_access
+        ORDER BY calendar_year, is_open_access DESC NULLS LAST;
 
--- SESSION 4: Topic specialization and thematic evolution
+-- SESSION 2: Geographic & Normalized Leadership
+-- Question: Does leadership change after accounting for country size and economic capacity?
+-- Navigation: Full participation: one publication per participating country
+WITH filtered_publications AS (
+    SELECT
+        publication.publication_key,
+        publication.source_key,
+        publication.publication_type,
+        publication.language,
+        publication.is_open_access,
+        publication.publication_count,
+        publication.citation_count,
+        date_dim.calendar_year,
+        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
+    FROM dw.fact_publication publication
+    LEFT JOIN dw.dim_date date_dim
+        ON date_dim.date_key = publication.date_key
+    LEFT JOIN dw.dim_source source
+        ON source.source_key = publication.source_key
+    WHERE date_dim.calendar_year >= 2018 AND
+            date_dim.calendar_year <= 2025
+)
+        SELECT country.country_code_iso2,
+               country.country_code_iso3,
+               coalesce(country.country_name, country.country_code_iso2) AS country_name,
+               country.region_name,
+               country.income_level_name,
+               country.has_world_bank_data,
+               sum(selected.publication_count)::numeric AS publications
+        FROM filtered_publications selected
+        JOIN dw.bridge_publication_country bridge
+          ON bridge.publication_key = selected.publication_key
+        JOIN dw.dim_country country ON country.country_key = bridge.country_key
+        WHERE TRUE
+        GROUP BY country.country_key, country.country_code_iso2,
+                 country.country_code_iso3, country.country_name,
+                 country.region_name, country.income_level_name,
+                 country.has_world_bank_data
+        ORDER BY publications DESC NULLS LAST, country_name
+        LIMIT 30;
+-- Navigation: Fractional attribution: original country weights
+WITH filtered_publications AS (
+    SELECT
+        publication.publication_key,
+        publication.source_key,
+        publication.publication_type,
+        publication.language,
+        publication.is_open_access,
+        publication.publication_count,
+        publication.citation_count,
+        date_dim.calendar_year,
+        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
+    FROM dw.fact_publication publication
+    LEFT JOIN dw.dim_date date_dim
+        ON date_dim.date_key = publication.date_key
+    LEFT JOIN dw.dim_source source
+        ON source.source_key = publication.source_key
+    WHERE date_dim.calendar_year >= 2018 AND
+            date_dim.calendar_year <= 2025
+)
+        SELECT country.country_code_iso2,
+               country.country_code_iso3,
+               coalesce(country.country_name, country.country_code_iso2) AS country_name,
+               country.region_name,
+               country.income_level_name,
+               country.has_world_bank_data,
+               sum(selected.publication_count * bridge.fractional_weight)::numeric AS publications
+        FROM filtered_publications selected
+        JOIN dw.bridge_publication_country bridge
+          ON bridge.publication_key = selected.publication_key
+        JOIN dw.dim_country country ON country.country_key = bridge.country_key
+        WHERE TRUE
+        GROUP BY country.country_key, country.country_code_iso2,
+                 country.country_code_iso3, country.country_name,
+                 country.region_name, country.income_level_name,
+                 country.has_world_bank_data
+        ORDER BY publications DESC NULLS LAST, country_name
+        LIMIT 30;
+-- Navigation: Drill to Country x Year, then across WDI; NULL denominators have no rank
+WITH country_year AS (
+        WITH filtered_publications AS (
+    SELECT
+        publication.publication_key,
+        publication.source_key,
+        publication.publication_type,
+        publication.language,
+        publication.is_open_access,
+        publication.publication_count,
+        publication.citation_count,
+        date_dim.calendar_year,
+        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
+    FROM dw.fact_publication publication
+    LEFT JOIN dw.dim_date date_dim
+        ON date_dim.date_key = publication.date_key
+    LEFT JOIN dw.dim_source source
+        ON source.source_key = publication.source_key
+    WHERE date_dim.calendar_year >= 2018 AND
+            date_dim.calendar_year <= 2025
+),
+        publication_country_year AS (
+            SELECT country.country_key,
+                   country.country_code_iso2,
+                   country.country_code_iso3,
+                   coalesce(country.country_name, country.country_code_iso2) AS country_name,
+                   country.region_name,
+                   country.income_level_name,
+                   country.has_world_bank_data,
+                   selected.calendar_year,
+                   sum(selected.publication_count) AS full_publications,
+                   sum(selected.publication_count * bridge.fractional_weight)::numeric
+                       AS fractional_publications
+            FROM filtered_publications selected
+            JOIN dw.bridge_publication_country bridge
+              ON bridge.publication_key = selected.publication_key
+            JOIN dw.dim_country country ON country.country_key = bridge.country_key
+            WHERE TRUE
+            GROUP BY country.country_key, country.country_code_iso2,
+                     country.country_code_iso3, country.country_name,
+                     country.region_name, country.income_level_name,
+                     country.has_world_bank_data, selected.calendar_year
+        )
+        SELECT publication.country_code_iso2,
+               publication.country_code_iso3,
+               publication.country_name,
+               publication.region_name,
+               publication.income_level_name,
+               publication.has_world_bank_data,
+               publication.calendar_year,
+               publication.fractional_publications,
+               indicator.population,
+               indicator.gdp_current_usd,
+               indicator.gdp_per_capita_current_usd,
+               indicator.internet_users_pct,
+               indicator.rd_expenditure_pct_gdp,
+               CASE WHEN indicator.population IS NULL OR indicator.population = 0
+                    THEN NULL
+                    ELSE publication.fractional_publications * 1000000::numeric
+                         / indicator.population
+               END AS publications_per_million,
+               CASE WHEN indicator.gdp_current_usd IS NULL OR indicator.gdp_current_usd = 0
+                    THEN NULL
+                    ELSE publication.fractional_publications * 1000000000::numeric
+                         / indicator.gdp_current_usd
+               END AS publications_per_billion_gdp,
+               publication.full_publications
+        FROM publication_country_year publication
+        LEFT JOIN dw.fact_country_year indicator
+          ON indicator.country_key = publication.country_key
+         AND indicator.year = publication.calendar_year
+        ORDER BY publication.calendar_year, publication.country_name
+        ), ranked AS (
+            SELECT *, rank() OVER (PARTITION BY calendar_year ORDER BY fractional_publications DESC) AS absolute_rank,
+                   CASE WHEN publications_per_million IS NOT NULL THEN
+                       rank() OVER (PARTITION BY calendar_year ORDER BY publications_per_million DESC NULLS LAST)
+                   END AS per_million_rank,
+                   CASE WHEN publications_per_billion_gdp IS NOT NULL THEN
+                       rank() OVER (PARTITION BY calendar_year ORDER BY publications_per_billion_gdp DESC NULLS LAST)
+                   END AS per_gdp_rank
+            FROM country_year
+        )
+        SELECT *, absolute_rank - per_million_rank AS population_rank_shift,
+                  absolute_rank - per_gdp_rank AS gdp_rank_shift
+        FROM ranked ORDER BY calendar_year, absolute_rank, country_code_iso2;
+
+-- SESSION 3: Income-Level Research Gap
+-- Question: How does country output and normalized intensity vary across income levels over time?
+-- Navigation: Country to Income Level x Year; full, fractional and matched-denominator ratios
+WITH filtered_publications AS (
+    SELECT
+        publication.publication_key,
+        publication.source_key,
+        publication.publication_type,
+        publication.language,
+        publication.is_open_access,
+        publication.publication_count,
+        publication.citation_count,
+        date_dim.calendar_year,
+        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
+    FROM dw.fact_publication publication
+    LEFT JOIN dw.dim_date date_dim
+        ON date_dim.date_key = publication.date_key
+    LEFT JOIN dw.dim_source source
+        ON source.source_key = publication.source_key
+    WHERE date_dim.calendar_year >= 2018 AND
+            date_dim.calendar_year <= 2025
+), year_coordinates AS (
+            SELECT DISTINCT year AS calendar_year FROM dw.fact_country_year
+        ), country_output AS (
+            SELECT country_key, calendar_year, sum(fractional_weight) AS fractional_publications
+            FROM filtered_publications JOIN dw.bridge_publication_country USING (publication_key)
+            GROUP BY country_key, calendar_year
+        ), country_year AS (
+            SELECT country.country_key, country.income_level_name AS member,
+                   year_coordinate.calendar_year, coalesce(output.fractional_publications, 0) AS fractional_publications,
+                   indicator.population, indicator.gdp_current_usd
+            FROM dw.dim_country country CROSS JOIN year_coordinates year_coordinate
+            LEFT JOIN country_output output ON output.country_key = country.country_key
+                AND output.calendar_year = year_coordinate.calendar_year
+            LEFT JOIN dw.fact_country_year indicator ON indicator.country_key = country.country_key
+                AND indicator.year = year_coordinate.calendar_year
+            WHERE year_coordinate.calendar_year >= 2018 AND year_coordinate.calendar_year <= 2025
+        ), group_publication AS (
+            SELECT country.income_level_name AS member, selected.calendar_year, selected.publication_key
+            FROM filtered_publications selected
+            JOIN dw.bridge_publication_country bridge USING (publication_key)
+            JOIN dw.dim_country country USING (country_key)
+            WHERE TRUE
+            GROUP BY country.income_level_name, selected.calendar_year, selected.publication_key
+        ), full_output AS (
+            SELECT member, calendar_year, count(*) AS full_publications
+            FROM group_publication GROUP BY member, calendar_year
+        )
+        SELECT coalesce(c.member, 'Missing / unavailable') AS member, c.calendar_year,
+               coalesce(f.full_publications, 0) AS full_publications,
+               sum(c.fractional_publications) AS fractional_publications,
+               sum(c.population) AS population, sum(c.gdp_current_usd) AS gdp_current_usd,
+               1000000::numeric * sum(c.fractional_publications) FILTER (WHERE c.population > 0)
+                 / nullif(sum(c.population) FILTER (WHERE c.population > 0), 0) AS publications_per_million,
+               1000000000::numeric * sum(c.fractional_publications) FILTER (WHERE c.gdp_current_usd > 0)
+                 / nullif(sum(c.gdp_current_usd) FILTER (WHERE c.gdp_current_usd > 0), 0) AS publications_per_billion_gdp,
+               count(*) AS countries,
+               count(*) FILTER (WHERE c.population > 0) AS population_countries,
+               count(*) FILTER (WHERE c.gdp_current_usd > 0) AS gdp_countries
+        FROM country_year c LEFT JOIN full_output f
+          ON f.member IS NOT DISTINCT FROM c.member AND f.calendar_year = c.calendar_year
+        GROUP BY c.member, c.calendar_year, f.full_publications
+        ORDER BY c.calendar_year, fractional_publications DESC, member;
+
+-- SESSION 4: Topic Specialization & Thematic Evolution
 -- Question: Which source-native topics characterize the selected corpus over time?
 -- Navigation: Roll up Topic to Domain: full appearance, once per publication and Domain
 WITH filtered_publications AS (
@@ -438,7 +417,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -461,13 +439,13 @@ WITH filtered_publications AS (
             WHERE TRUE
             GROUP BY selected.publication_key, selected.calendar_year, topic.domain_id, topic.domain_name
         ), member_year AS (
-            SELECT member_id, member_name , sum(attributed_publications) AS publications
-            FROM publication_member GROUP BY member_id, member_name 
+            SELECT member_id, member_name, sum(attributed_publications) AS publications
+            FROM publication_member GROUP BY member_id, member_name
         ), leaders AS (
             SELECT member_id FROM member_year GROUP BY member_id
             ORDER BY sum(publications) DESC, member_id LIMIT 30
         )
-        SELECT member_year.member_id, member_year.member_name , member_year.publications
+        SELECT member_year.member_id, member_year.member_name, member_year.publications
         FROM member_year JOIN leaders USING (member_id)
         ORDER BY  publications DESC, member_name;
 -- Navigation: Drill to Subfield x Year: full appearance
@@ -478,7 +456,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -501,13 +478,13 @@ WITH filtered_publications AS (
             WHERE TRUE
             GROUP BY selected.publication_key, selected.calendar_year, topic.subfield_id, topic.subfield_name
         ), member_year AS (
-            SELECT member_id, member_name , calendar_year, sum(attributed_publications) AS publications
-            FROM publication_member GROUP BY member_id, member_name , calendar_year
+            SELECT member_id, member_name, calendar_year, sum(attributed_publications) AS publications
+            FROM publication_member GROUP BY member_id, member_name, calendar_year
         ), leaders AS (
             SELECT member_id FROM member_year GROUP BY member_id
             ORDER BY sum(publications) DESC, member_id LIMIT 8
         )
-        SELECT member_year.member_id, member_year.member_name , member_year.calendar_year, member_year.publications
+        SELECT member_year.member_id, member_year.member_name, member_year.calendar_year, member_year.publications
         FROM member_year JOIN leaders USING (member_id)
         ORDER BY calendar_year, publications DESC, member_name;
 -- Navigation: Drill to Topic and change measure to fractional topic attribution
@@ -518,7 +495,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -541,17 +517,17 @@ WITH filtered_publications AS (
             WHERE TRUE
             GROUP BY selected.publication_key, selected.calendar_year, topic.openalex_topic_id, topic.topic_name
         ), member_year AS (
-            SELECT member_id, member_name , sum(attributed_publications) AS publications
-            FROM publication_member GROUP BY member_id, member_name 
+            SELECT member_id, member_name, sum(attributed_publications) AS publications
+            FROM publication_member GROUP BY member_id, member_name
         ), leaders AS (
             SELECT member_id FROM member_year GROUP BY member_id
             ORDER BY sum(publications) DESC, member_id LIMIT 30
         )
-        SELECT member_year.member_id, member_year.member_name , member_year.publications
+        SELECT member_year.member_id, member_year.member_name, member_year.publications
         FROM member_year JOIN leaders USING (member_id)
         ORDER BY  publications DESC, member_name;
 
--- SESSION 5: Wealth vs research intensity
+-- SESSION 5: Wealth vs AI Research Intensity
 -- Question: Is GDP per capita associated with fractional publications per million?
 -- Navigation: Slice selected year; Region/Income Level are alternative country attributes
 WITH filtered_publications AS (
@@ -561,7 +537,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -621,307 +596,12 @@ WITH filtered_publications AS (
                END AS publications_per_billion_gdp,
                publication.full_publications
         FROM publication_country_year publication
-        LEFT JOIN dw.dim_year year_dim
-          ON year_dim.calendar_year = publication.calendar_year
         LEFT JOIN dw.fact_country_year indicator
           ON indicator.country_key = publication.country_key
-         AND indicator.year_key = year_dim.year_key
+         AND indicator.year = publication.calendar_year
         ORDER BY publication.calendar_year, publication.country_name;
 
--- SESSION 6: Digital access vs research intensity
--- Question: Is Internet penetration associated with fractional publications per million?
--- Navigation: Year navigation: retain unavailable pairs; Internet is an observed proxy
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-),
-        publication_country_year AS (
-            SELECT country.country_key,
-                   country.country_code_iso2,
-                   country.country_code_iso3,
-                   coalesce(country.country_name, country.country_code_iso2) AS country_name,
-                   country.region_name,
-                   country.income_level_name,
-                   country.has_world_bank_data,
-                   selected.calendar_year,
-                   sum(selected.publication_count) AS full_publications,
-                   sum(selected.publication_count * bridge.fractional_weight)::numeric
-                       AS fractional_publications
-            FROM filtered_publications selected
-            JOIN dw.bridge_publication_country bridge
-              ON bridge.publication_key = selected.publication_key
-            JOIN dw.dim_country country ON country.country_key = bridge.country_key
-            WHERE TRUE
-            GROUP BY country.country_key, country.country_code_iso2,
-                     country.country_code_iso3, country.country_name,
-                     country.region_name, country.income_level_name,
-                     country.has_world_bank_data, selected.calendar_year
-        )
-        SELECT publication.country_code_iso2,
-               publication.country_code_iso3,
-               publication.country_name,
-               publication.region_name,
-               publication.income_level_name,
-               publication.has_world_bank_data,
-               publication.calendar_year,
-               publication.fractional_publications,
-               indicator.population,
-               indicator.gdp_current_usd,
-               indicator.gdp_per_capita_current_usd,
-               indicator.internet_users_pct,
-               indicator.rd_expenditure_pct_gdp,
-               CASE WHEN indicator.population IS NULL OR indicator.population = 0
-                    THEN NULL
-                    ELSE publication.fractional_publications * 1000000::numeric
-                         / indicator.population
-               END AS publications_per_million,
-               CASE WHEN indicator.gdp_current_usd IS NULL OR indicator.gdp_current_usd = 0
-                    THEN NULL
-                    ELSE publication.fractional_publications * 1000000000::numeric
-                         / indicator.gdp_current_usd
-               END AS publications_per_billion_gdp,
-               publication.full_publications
-        FROM publication_country_year publication
-        LEFT JOIN dw.dim_year year_dim
-          ON year_dim.calendar_year = publication.calendar_year
-        LEFT JOIN dw.fact_country_year indicator
-          ON indicator.country_key = publication.country_key
-         AND indicator.year_key = year_dim.year_key
-        ORDER BY publication.calendar_year, publication.country_name;
-
--- SESSION 7: Income-level research gap
--- Question: How does country output and normalized intensity vary across income levels over time?
--- Navigation: Country to Income Level x Year; full, fractional and matched-denominator ratios
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-), country_output AS (
-            SELECT country_key, calendar_year, sum(fractional_weight) AS fractional_publications
-            FROM filtered_publications JOIN dw.bridge_publication_country USING (publication_key)
-            GROUP BY country_key, calendar_year
-        ), country_year AS (
-            SELECT country.country_key, country.income_level_name AS member,
-                   year_dim.calendar_year, coalesce(output.fractional_publications, 0) AS fractional_publications,
-                   indicator.population, indicator.gdp_current_usd
-            FROM dw.dim_country country CROSS JOIN dw.dim_year year_dim
-            LEFT JOIN country_output output ON output.country_key = country.country_key
-                AND output.calendar_year = year_dim.calendar_year
-            LEFT JOIN dw.fact_country_year indicator ON indicator.country_key = country.country_key
-                AND indicator.year_key = year_dim.year_key
-            WHERE year_dim.calendar_year >= 2018 AND year_dim.calendar_year <= 2025
-        ), group_publication AS (
-            SELECT country.income_level_name AS member, selected.calendar_year, selected.publication_key
-            FROM filtered_publications selected
-            JOIN dw.bridge_publication_country bridge USING (publication_key)
-            JOIN dw.dim_country country USING (country_key)
-            WHERE TRUE
-            GROUP BY country.income_level_name, selected.calendar_year, selected.publication_key
-        ), full_output AS (
-            SELECT member, calendar_year, count(*) AS full_publications
-            FROM group_publication GROUP BY member, calendar_year
-        )
-        SELECT coalesce(c.member, 'Missing / unavailable') AS member, c.calendar_year,
-               coalesce(f.full_publications, 0) AS full_publications,
-               sum(c.fractional_publications) AS fractional_publications,
-               sum(c.population) AS population, sum(c.gdp_current_usd) AS gdp_current_usd,
-               1000000::numeric * sum(c.fractional_publications) FILTER (WHERE c.population > 0)
-                 / nullif(sum(c.population) FILTER (WHERE c.population > 0), 0) AS publications_per_million,
-               1000000000::numeric * sum(c.fractional_publications) FILTER (WHERE c.gdp_current_usd > 0)
-                 / nullif(sum(c.gdp_current_usd) FILTER (WHERE c.gdp_current_usd > 0), 0) AS publications_per_billion_gdp,
-               count(*) AS countries,
-               count(*) FILTER (WHERE c.population > 0) AS population_countries,
-               count(*) FILTER (WHERE c.gdp_current_usd > 0) AS gdp_countries
-        FROM country_year c LEFT JOIN full_output f
-          ON f.member IS NOT DISTINCT FROM c.member AND f.calendar_year = c.calendar_year
-        GROUP BY c.member, c.calendar_year, f.full_publications
-        ORDER BY c.calendar_year, fractional_publications DESC, member;
-
--- SESSION 8: Regional research capacity
--- Question: How does regional output compare with observed population and GDP?
--- Navigation: Country to Region x Year; report denominator coverage; never sum population across years
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-), country_output AS (
-            SELECT country_key, calendar_year, sum(fractional_weight) AS fractional_publications
-            FROM filtered_publications JOIN dw.bridge_publication_country USING (publication_key)
-            GROUP BY country_key, calendar_year
-        ), country_year AS (
-            SELECT country.country_key, country.region_name AS member,
-                   year_dim.calendar_year, coalesce(output.fractional_publications, 0) AS fractional_publications,
-                   indicator.population, indicator.gdp_current_usd
-            FROM dw.dim_country country CROSS JOIN dw.dim_year year_dim
-            LEFT JOIN country_output output ON output.country_key = country.country_key
-                AND output.calendar_year = year_dim.calendar_year
-            LEFT JOIN dw.fact_country_year indicator ON indicator.country_key = country.country_key
-                AND indicator.year_key = year_dim.year_key
-            WHERE year_dim.calendar_year >= 2018 AND year_dim.calendar_year <= 2025
-        ), group_publication AS (
-            SELECT country.region_name AS member, selected.calendar_year, selected.publication_key
-            FROM filtered_publications selected
-            JOIN dw.bridge_publication_country bridge USING (publication_key)
-            JOIN dw.dim_country country USING (country_key)
-            WHERE TRUE
-            GROUP BY country.region_name, selected.calendar_year, selected.publication_key
-        ), full_output AS (
-            SELECT member, calendar_year, count(*) AS full_publications
-            FROM group_publication GROUP BY member, calendar_year
-        )
-        SELECT coalesce(c.member, 'Missing / unavailable') AS member, c.calendar_year,
-               coalesce(f.full_publications, 0) AS full_publications,
-               sum(c.fractional_publications) AS fractional_publications,
-               sum(c.population) AS population, sum(c.gdp_current_usd) AS gdp_current_usd,
-               1000000::numeric * sum(c.fractional_publications) FILTER (WHERE c.population > 0)
-                 / nullif(sum(c.population) FILTER (WHERE c.population > 0), 0) AS publications_per_million,
-               1000000000::numeric * sum(c.fractional_publications) FILTER (WHERE c.gdp_current_usd > 0)
-                 / nullif(sum(c.gdp_current_usd) FILTER (WHERE c.gdp_current_usd > 0), 0) AS publications_per_billion_gdp,
-               count(*) AS countries,
-               count(*) FILTER (WHERE c.population > 0) AS population_countries,
-               count(*) FILTER (WHERE c.gdp_current_usd > 0) AS gdp_countries
-        FROM country_year c LEFT JOIN full_output f
-          ON f.member IS NOT DISTINCT FROM c.member AND f.calendar_year = c.calendar_year
-        GROUP BY c.member, c.calendar_year, f.full_publications
-        ORDER BY c.calendar_year, fractional_publications DESC, member;
-
--- SESSION 9: Research growth vs socioeconomic change
--- Question: Are adjacent-year changes in intensity associated with socioeconomic changes?
--- Navigation: Country x Year self-join to preceding calendar year; absolute changes avoid tiny-base percentage instability
-WITH country_year AS (
-        WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-),
-        publication_country_year AS (
-            SELECT country.country_key,
-                   country.country_code_iso2,
-                   country.country_code_iso3,
-                   coalesce(country.country_name, country.country_code_iso2) AS country_name,
-                   country.region_name,
-                   country.income_level_name,
-                   country.has_world_bank_data,
-                   selected.calendar_year,
-                   sum(selected.publication_count) AS full_publications,
-                   sum(selected.publication_count * bridge.fractional_weight)::numeric
-                       AS fractional_publications
-            FROM filtered_publications selected
-            JOIN dw.bridge_publication_country bridge
-              ON bridge.publication_key = selected.publication_key
-            JOIN dw.dim_country country ON country.country_key = bridge.country_key
-            WHERE TRUE
-            GROUP BY country.country_key, country.country_code_iso2,
-                     country.country_code_iso3, country.country_name,
-                     country.region_name, country.income_level_name,
-                     country.has_world_bank_data, selected.calendar_year
-        )
-        SELECT publication.country_code_iso2,
-               publication.country_code_iso3,
-               publication.country_name,
-               publication.region_name,
-               publication.income_level_name,
-               publication.has_world_bank_data,
-               publication.calendar_year,
-               publication.fractional_publications,
-               indicator.population,
-               indicator.gdp_current_usd,
-               indicator.gdp_per_capita_current_usd,
-               indicator.internet_users_pct,
-               indicator.rd_expenditure_pct_gdp,
-               CASE WHEN indicator.population IS NULL OR indicator.population = 0
-                    THEN NULL
-                    ELSE publication.fractional_publications * 1000000::numeric
-                         / indicator.population
-               END AS publications_per_million,
-               CASE WHEN indicator.gdp_current_usd IS NULL OR indicator.gdp_current_usd = 0
-                    THEN NULL
-                    ELSE publication.fractional_publications * 1000000000::numeric
-                         / indicator.gdp_current_usd
-               END AS publications_per_billion_gdp,
-               publication.full_publications
-        FROM publication_country_year publication
-        LEFT JOIN dw.dim_year year_dim
-          ON year_dim.calendar_year = publication.calendar_year
-        LEFT JOIN dw.fact_country_year indicator
-          ON indicator.country_key = publication.country_key
-         AND indicator.year_key = year_dim.year_key
-        ORDER BY publication.calendar_year, publication.country_name
-        )
-        SELECT current.country_name, current.region_name, current.income_level_name,
-               current.calendar_year,
-               current.fractional_publications - previous.fractional_publications AS output_change,
-               current.publications_per_million - previous.publications_per_million AS intensity_change,
-               current.gdp_current_usd - previous.gdp_current_usd AS gdp_change,
-               current.internet_users_pct - previous.internet_users_pct AS internet_change_pp,
-               current.rd_expenditure_pct_gdp - previous.rd_expenditure_pct_gdp AS rd_change_pp
-        FROM country_year current
-        LEFT JOIN country_year previous ON previous.country_code_iso2 = current.country_code_iso2
-             AND previous.calendar_year = current.calendar_year - 1
-        ORDER BY current.calendar_year, current.country_name;
-
--- SESSION 10: Institutional leadership
+-- SESSION 6: Institutional Leadership
 -- Question: Which institution types and institutions participate in the corpus?
 -- Navigation: Roll up Institution Type: full participation once per publication/type
 SELECT member_name AS institution_type, publications FROM (
@@ -932,7 +612,6 @@ SELECT member_name AS institution_type, publications FROM (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -955,13 +634,13 @@ SELECT member_name AS institution_type, publications FROM (
             WHERE TRUE
             GROUP BY selected.publication_key, selected.calendar_year, institution.institution_type, institution.institution_type
         ), member_year AS (
-            SELECT member_id, member_name , sum(attributed_publications) AS publications
-            FROM publication_member GROUP BY member_id, member_name 
+            SELECT member_id, member_name, sum(attributed_publications) AS publications
+            FROM publication_member GROUP BY member_id, member_name
         ), leaders AS (
             SELECT member_id FROM member_year GROUP BY member_id
             ORDER BY sum(publications) DESC, member_id LIMIT 50
         )
-        SELECT member_year.member_id, member_year.member_name , member_year.publications
+        SELECT member_year.member_id, member_year.member_name, member_year.publications
         FROM member_year JOIN leaders USING (member_id)
         ORDER BY  publications DESC, member_name
     ) result;
@@ -973,7 +652,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -1011,7 +689,6 @@ WITH filtered_publications AS (
         publication.publication_type,
         publication.language,
         publication.is_open_access,
-        publication.open_access_status,
         publication.publication_count,
         publication.citation_count,
         date_dim.calendar_year,
@@ -1041,265 +718,4 @@ WITH filtered_publications AS (
                  institution.country_code_iso2
         ORDER BY publications DESC NULLS LAST, institution_name
         LIMIT 30;
-
--- SESSION 11: Cumulative citation impact
--- Question: How are citation snapshots distributed across publication years and members?
--- Navigation: Year: cumulative snapshots and average per publication; publication-age bias applies
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-SELECT calendar_year,
-               sum(publication_count)::numeric AS publications,
-               sum(citation_count)::numeric AS cumulative_citations,
-               avg(citation_count)::numeric AS average_citations
-        FROM filtered_publications
-        GROUP BY calendar_year
-        ORDER BY calendar_year;
--- Navigation: Country: full attributed cumulative citations
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-        SELECT coalesce(country.country_name, country.country_code_iso2) AS member_name,
-               sum(selected.citation_count)::numeric AS cumulative_citations,
-               sum(selected.publication_count)::numeric AS publications
-        FROM filtered_publications selected
-        JOIN dw.bridge_publication_country bridge
-          ON bridge.publication_key = selected.publication_key
-        JOIN dw.dim_country country ON country.country_key = bridge.country_key
-        WHERE TRUE
-        GROUP BY country.country_key, coalesce(country.country_name, country.country_code_iso2)
-        ORDER BY cumulative_citations DESC NULLS LAST, member_name
-        LIMIT 30;
--- Navigation: Topic: fractionally attributed cumulative citations
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-        SELECT coalesce(topic.topic_name, topic.openalex_topic_id) AS member_name,
-               sum(selected.citation_count * bridge.fractional_weight)::numeric AS cumulative_citations,
-               sum(selected.publication_count * bridge.fractional_weight)::numeric AS publications
-        FROM filtered_publications selected
-        JOIN dw.bridge_publication_topic bridge
-          ON bridge.publication_key = selected.publication_key
-        JOIN dw.dim_topic topic ON topic.topic_key = bridge.topic_key
-        WHERE TRUE
-        GROUP BY topic.topic_key, coalesce(topic.topic_name, topic.openalex_topic_id)
-        ORDER BY cumulative_citations DESC NULLS LAST, member_name
-        LIMIT 30;
--- Navigation: Publication Type: cumulative snapshots; no bridge attribution
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-SELECT coalesce(selected.publication_type, 'Missing / unavailable') AS member_name,
-                   sum(selected.citation_count)::numeric AS cumulative_citations,
-                   avg(selected.citation_count)::numeric AS average_citations,
-                   sum(selected.publication_count)::numeric AS publications
-            FROM filtered_publications selected
-            
-            GROUP BY selected.publication_type
-            ORDER BY cumulative_citations DESC NULLS LAST, member_name
-            LIMIT 30;
-
--- SESSION 12: Publication ecosystem
--- Question: How does the corpus distribute across sources, types, access and language?
--- Navigation: Source Type roll-up; missing source is presentation-only
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-SELECT coalesce(source.source_type, 'Missing / unavailable') AS source_type,
-               sum(selected.publication_count)::numeric AS publications
-        FROM filtered_publications selected
-        LEFT JOIN dw.dim_source source ON source.source_key = selected.source_key
-        GROUP BY coalesce(source.source_type, 'Missing / unavailable')
-        ORDER BY publications DESC NULLS LAST, source_type;
--- Navigation: Drill to Source
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-SELECT coalesce(source.openalex_source_id, '__MISSING__') AS source_id,
-               coalesce(source.source_name, 'Missing / unavailable') AS source_name,
-               coalesce(source.source_type, 'Missing / unavailable') AS source_type,
-               sum(selected.publication_count)::numeric AS publications
-        FROM filtered_publications selected
-        LEFT JOIN dw.dim_source source ON source.source_key = selected.source_key
-        GROUP BY source.openalex_source_id, source.source_name, source.source_type
-        ORDER BY publications DESC NULLS LAST, source_name
-        LIMIT 30;
--- Navigation: Publication Type x Year
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-SELECT calendar_year,
-               coalesce(publication_type, 'Missing / unavailable') AS publication_type,
-               sum(publication_count)::numeric AS publications
-        FROM filtered_publications
-        GROUP BY calendar_year, coalesce(publication_type, 'Missing / unavailable')
-        ORDER BY calendar_year, publication_type;
--- Navigation: Open Access x Year
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-SELECT calendar_year,
-               coalesce(open_access_status, 'Missing / unavailable') AS open_access_status,
-               sum(publication_count)::numeric AS publications
-        FROM filtered_publications
-        GROUP BY calendar_year, coalesce(open_access_status, 'Missing / unavailable')
-        ORDER BY calendar_year, open_access_status;
--- Navigation: Language distribution
-WITH filtered_publications AS (
-    SELECT
-        publication.publication_key,
-        publication.source_key,
-        publication.publication_type,
-        publication.language,
-        publication.is_open_access,
-        publication.open_access_status,
-        publication.publication_count,
-        publication.citation_count,
-        date_dim.calendar_year,
-        date_dim.full_date, date_dim.quarter_number, date_dim.month_number
-    FROM dw.fact_publication publication
-    LEFT JOIN dw.dim_date date_dim
-        ON date_dim.date_key = publication.date_key
-    LEFT JOIN dw.dim_source source
-        ON source.source_key = publication.source_key
-    WHERE date_dim.calendar_year >= 2018 AND
-            date_dim.calendar_year <= 2025
-)
-SELECT language, sum(publication_count) AS publications FROM filtered_publications GROUP BY language ORDER BY publications DESC NULLS LAST, language;
 COMMIT;

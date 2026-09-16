@@ -107,17 +107,22 @@ before publication.
 
 ### Dimensional warehouse
 
-The fact constellation contains two facts, six dimensions, and three bridges:
+The fact constellation contains two facts, five dimensions, and three bridges:
 
 - Facts: `fact_publication`, `fact_country_year`
-- Dimensions: `dim_date`, `dim_year`, `dim_country`, `dim_topic`,
-  `dim_institution`, `dim_source`
+- Dimensions: `dim_date`, `dim_country`, `dim_topic`, `dim_institution`,
+  `dim_source`
 - Bridges: `bridge_publication_topic`, `bridge_publication_country`,
   `bridge_publication_institution`
 
-`fact_publication` has one row per sampled work. `fact_country_year` has one row
-per observed World Bank economy and year. Surrogate keys are confined to the
-warehouse, while source identifiers remain unique dimension attributes.
+`fact_publication` has one row per sampled OpenAlex work and retains the nullable
+source boolean `is_open_access` as its only Open Access attribute. The categorical
+`open_access_status` field has been removed from the warehouse. `fact_country_year` has one row
+per observed World Bank Country × Year. Country resolves through `dim_country`;
+year is a degenerate dimension stored directly as `fact_country_year.year`.
+There is no `dim_year` table. `country_year_key` remains a technical
+surrogate primary key, while `UNIQUE(country_key, year)` enforces the logical
+multidimensional grain.
 
 ## Analytical semantics
 
@@ -138,10 +143,13 @@ the dashboard counting selector:
 - publications per billion USD of GDP.
 
 Publication output is first aggregated to Country × Year, then drilled across
-to World Bank measures at the same grain. Missing or zero denominators produce
-`NULL`. Filters on other multi-valued dimensions use independent publication-key
-semi-joins; analytical measures never multiply country, topic, and institution
-bridges in one aggregation.
+to World Bank measures at the same grain. The publication coordinate comes from
+`dim_date.calendar_year`; the socioeconomic coordinate comes directly from
+`fact_country_year.year`. Their equality is an analytical drill-across condition,
+not a physical foreign key. Missing or zero denominators produce `NULL`. Filters
+on other multi-valued dimensions use independent publication-key semi-joins;
+analytical measures never multiply country, topic, and institution bridges in
+one aggregation.
 
 Valid OpenAlex geographies are preserved even when the frozen World Bank source
 has no observation. Such members have `has_world_bank_data = FALSE`, no invented
@@ -157,21 +165,15 @@ and are never summed.
 
 ## OLAP sessions
 
-`analysis/sessions.py` defines and can execute/export the final twelve sessions;
+`analysis/sessions.py` defines and can execute/export the final six sessions;
 `analysis/olap_sessions.sql` is the generated standalone PostgreSQL form.
 
-1. Absolute vs Normalized Geographic Leadership
-2. R&D Investment vs AI Research Intensity
-3. Evolution of AI Research / Post-2022 Analysis
-4. Topic Specialization and Thematic Evolution
+1. Research Growth
+2. Geographic & Normalized Leadership
+3. Income-Level Research Gap
+4. Topic Specialization & Thematic Evolution
 5. Wealth vs AI Research Intensity
-6. Digital Access vs AI Research Intensity
-7. Income-Level Research Gap
-8. Regional Research Capacity
-9. AI Research Growth vs Socioeconomic Change
-10. Institutional Leadership
-11. Cumulative Citation Impact
-12. Publication Ecosystem
+6. Institutional Leadership
 
 The query builders use read-only, parameterized SQL and preserve bridge grain,
 NULL semantics, and Full/Fractional behavior. The project does not hard-code
@@ -188,11 +190,15 @@ The Streamlit/Plotly dashboard provides nine views:
 5. Socioeconomic Context
 6. Topics
 7. Institutions
-8. Citation Impact
-9. Publication Ecosystem
+8. Publication Ecosystem
+9. Citation Impact
 
 Filters cover time, geography, topic hierarchy, institution/source/publication
-types, language, Open Access, and Full/Fractional counting. Queries aggregate in
+types, language, Open Access, and Full/Fractional attribution. They apply
+automatically and remain available on all nine pages. Geographic, thematic, and
+additional controls are grouped in compact sidebar expanders. Appearance is
+controlled through Streamlit's native menu, with Light configured as the default;
+Plotly charts follow the active native client theme. Queries aggregate in
 PostgreSQL and expose compact downloadable result tables.
 
 ## Repository structure
@@ -203,7 +209,7 @@ PostgreSQL and expose compact downloadable result tables.
 ├── data/raw/         Local, Git-ignored raw datasets and manifests
 ├── reconciliation/   Natural-key reconciled schema and transactional loader
 ├── warehouse/        Fact-constellation schema and transactional loader
-├── analysis/         Twelve OLAP sessions and compact smoke queries
+├── analysis/         Six OLAP sessions and compact smoke queries
 ├── dashboard/        Streamlit application, query layer, views, and dependencies
 ├── tests/            Unit and isolated-PostgreSQL integration tests
 ├── .streamlit/       Versioned visual/runtime configuration

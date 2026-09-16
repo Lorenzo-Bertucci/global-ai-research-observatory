@@ -1,5 +1,8 @@
 # Global AI Research Observatory
 
+**Author:** Lorenzo Bertucci<br>
+**Course:** Data Management, Academic Year 2025-2026<br>
+
 **An end-to-end Data Warehousing project for analysing the evolution, geography, thematic structure, and socioeconomic context of global Artificial Intelligence research.**
 
 Global AI Research Observatory is an academic Data Management project that integrates a year-stratified sample of OpenAlex publications with World Bank World Development Indicators for 2018-2025. Heterogeneous source records pass through a natural-key reconciled layer before being loaded into a PostgreSQL dimensional fact constellation. Two facts, five dimensions, and three many-to-many bridges support six validated standalone OLAP sessions. A Streamlit and Plotly dashboard provides an interactive analytical interface over the same warehouse; the Data Warehouse, rather than the dashboard, is the project's central artifact.
@@ -22,7 +25,6 @@ Global AI Research Observatory is an academic Data Management project that integ
 - [Testing and Validation](#14-testing-and-validation)
 - [Reproducibility](#15-reproducibility)
 - [Data Quality and Methodological Limitations](#16-data-quality-and-methodological-limitations)
-- [Presentation and Demo](#17-presentation-and-demo)
 
 ## 1. Project Overview
 
@@ -252,7 +254,6 @@ global-ai-research-observatory/
 |   |-- queries.py            |-- ui.py
 |   |-- views.py              `-- requirements.txt
 |-- data/raw/
-|   `-- .gitkeep
 |-- extraction/
 |   |-- extract_openalex.py   `-- extract_world_bank.py
 |-- reconciliation/
@@ -273,7 +274,6 @@ global-ai-research-observatory/
 |   |-- test_load_dw.py
 |   |-- test_dashboard.py
 |   `-- test_launcher.py
-|-- .gitignore
 |-- .streamlit/config.toml
 |-- run_dashboard.py
 `-- README.md
@@ -428,26 +428,3 @@ The procedure is deterministic for a fixed source state, but future API runs are
 - **Citation snapshot:** cumulative citations are affected by publication-age bias.
 - **Live metadata:** source records can change after extraction.
 - **Descriptive associations:** socioeconomic comparisons do not establish causality.
-
-## 17. Presentation and Demo
-
-The final presentation is [`presentation/Global AI Research Observatory.pdf`](presentation/Global%20AI%20Research%20Observatory.pdf). It covers source integration, reconciliation, dimensional design, bridge-aware counting, the six sessions, validated results, limitations, and the live dashboard demonstration.
-
-## 18. Technologies
-
-Python 3, PostgreSQL, Psycopg 3, pandas, Streamlit, Plotly, OpenAlex API, World Bank Indicators API v2, and `unittest`.
-
-## 19. References
-
-- [OpenAlex API documentation](https://docs.openalex.org/)
-- [World Bank Indicators API documentation](https://datahelpdesk.worldbank.org/knowledgebase/topics/125589-developer-information)
-- [PostgreSQL documentation](https://www.postgresql.org/docs/)
-- [Psycopg 3 documentation](https://www.psycopg.org/psycopg3/docs/)
-- [Streamlit documentation](https://docs.streamlit.io/)
-- [Plotly Python documentation](https://plotly.com/python/)
-
-## 20. Author and Academic Context
-
-**Author:** Lorenzo Bertucci<br>
-**Course:** Data Management, Academic Year 2025-2026<br>
-**Project type:** University Data Warehousing project for academic evaluation and demonstration

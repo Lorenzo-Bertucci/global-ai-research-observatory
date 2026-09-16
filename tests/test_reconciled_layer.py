@@ -10,7 +10,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "reconciliation"))
-import load_reconciled as reconciler  # noqa: E402
+import load_reconciled as reconciler
 
 try:
     import psycopg

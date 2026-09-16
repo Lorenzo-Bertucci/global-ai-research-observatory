@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 
@@ -34,6 +33,7 @@ from dashboard.ui import (  # noqa: E402
     empty_state,
     horizontal_bar,
     line_chart,
+    place_legend_below_plot,
     safe_file_stem,
 )
 
@@ -350,7 +350,7 @@ def build_filters(options: pd.DataFrame, minimum_year: int, maximum_year: int):
 
 
 def top_n_control(key: str, default: int = 15) -> int:
-    values = (6, 8, 10, 15, 20, 30)
+    values = (4, 6, 8, 10, 15, 20, 30)
     return st.select_slider("Top N", values, value=default, key=key)
 
 
@@ -629,24 +629,16 @@ def render_countries(filters: queries.FilterState, counting_method: str) -> None
     st.caption(
         "Which countries lead AI research, and how does attribution change the ranking?"
     )
-    available_years = list(range(filters.start_year, filters.end_year + 1))
-    control_left, control_mid, control_right = st.columns((1, 1, 2))
+    period_label = f"{filters.start_year}–{filters.end_year}"
+    control_left, control_right = st.columns((1, 3))
     with control_left:
-        default_year = 2023 if 2023 in available_years else available_years[-1]
-        analysis_year = st.selectbox(
-            "Analysis year",
-            available_years,
-            index=available_years.index(default_year),
-            key="country_analysis_year",
-        )
-    with control_mid:
         top_n = top_n_control("country_top_n")
     with control_right:
         compare_attribution = st.toggle(
             "Compare attribution methods",
             value=False,
             help=(
-                "Show Full and Fractional country rankings for the same year and "
+                "Show Full and Fractional country rankings for the same period and "
                 "Top N selection."
             ),
         )
@@ -655,27 +647,26 @@ def render_countries(filters: queries.FilterState, counting_method: str) -> None
         "country. Fractional counting = publication contribution distributed "
         "across associated countries through bridge weights."
     )
-    snapshot_filters = replace(
-        filters, start_year=analysis_year, end_year=analysis_year
-    )
     countries = numeric(
-        run(queries.country_output(snapshot_filters, counting_method, limit=500)),
+        run(queries.country_output(filters, counting_method, limit=500)),
         "publications",
     )
     if countries.empty:
         empty_state()
         return
+
     def ranking_figure(frame: pd.DataFrame, method: str, height: int = 500):
         return horizontal_bar(
             frame.head(top_n),
             x="publications",
             y="country_name",
-            title=f"{method} counting · {analysis_year}",
+            title=f"{method} counting · {period_label}",
             x_title=(
                 "Full publication participation"
                 if method == "Full"
                 else "Fractional publications"
             ),
+            color=BLUE if method == "Full" else TEAL,
             hover_data={
                 "country_code_iso2": True,
                 "region_name": True,
@@ -687,11 +678,11 @@ def render_countries(filters: queries.FilterState, counting_method: str) -> None
 
     if compare_attribution:
         full_countries = numeric(
-            run(queries.country_output(snapshot_filters, "Full", limit=500)),
+            run(queries.country_output(filters, "Full", limit=500)),
             "publications",
         )
         fractional_countries = numeric(
-            run(queries.country_output(snapshot_filters, "Fractional", limit=500)),
+            run(queries.country_output(filters, "Fractional", limit=500)),
             "publications",
         )
         comparison_max = max(
@@ -716,7 +707,7 @@ def render_countries(filters: queries.FilterState, counting_method: str) -> None
                 config={"displaylogo": False},
             )
         st.caption(
-            "Both rankings use the same linear axis range, analysis year and Top N."
+            "Both rankings use the same linear axis range, publication period and Top N."
         )
     else:
         st.plotly_chart(
@@ -736,7 +727,7 @@ def render_countries(filters: queries.FilterState, counting_method: str) -> None
             "publications": ":,.2f",
         },
         color_continuous_scale=["#BFD7E8", BLUE, NAVY],
-        title=f"Geographic participation · {counting_method} counting · {analysis_year}",
+        title=f"Geographic participation · {counting_method} counting · {period_label}",
     )
     map_figure.update_geos(
         showframe=False,
@@ -754,7 +745,7 @@ def render_countries(filters: queries.FilterState, counting_method: str) -> None
         "Taiwan (TW/TWN) retains its warehouse identity; the map does not remap it."
     )
     regions = numeric(
-        run(queries.regional_output(snapshot_filters, counting_method)), "publications"
+        run(queries.regional_output(filters, counting_method)), "publications"
     )
     with st.expander("Regional context and data"):
         if not regions.empty:
@@ -1065,7 +1056,7 @@ def render_topics(filters: queries.FilterState, counting_method: str) -> None:
             ),
         )
     with controls[2]:
-        top_n = top_n_control("topic_top_n", default=8)
+        top_n = top_n_control("topic_top_n", default=4)
     ranking = numeric(
         run(queries.topic_output(filters, counting_method, level, top_n)),
         "publications",
@@ -1102,7 +1093,7 @@ def render_topics(filters: queries.FilterState, counting_method: str) -> None:
         figure.update_xaxes(dtick=1)
         figure.update_yaxes(ticksuffix="%")
         st.plotly_chart(
-            apply_figure_style(figure, 500),
+            place_legend_below_plot(apply_figure_style(figure, 500)),
             width="stretch",
             config={"displaylogo": False},
         )
@@ -1118,18 +1109,20 @@ def render_topics(filters: queries.FilterState, counting_method: str) -> None:
             )
     else:
         st.plotly_chart(
-            line_chart(
-                evolution,
-                x="calendar_year",
-                y="publications",
-                color="member_name",
-                title=f"Leading {level.lower()}s over time",
-                y_title=(
-                    "Full publication participation"
-                    if counting_method == "Full"
-                    else "Fractional publications"
+            place_legend_below_plot(
+                line_chart(
+                    evolution,
+                    x="calendar_year",
+                    y="publications",
+                    color="member_name",
+                    title=f"Leading {level.lower()}s over time",
+                    y_title=(
+                        "Full publication participation"
+                        if counting_method == "Full"
+                        else "Fractional publications"
+                    ),
+                    height=500,
                 ),
-                height=500,
             ),
             width="stretch",
             config={"displaylogo": False},
@@ -1541,6 +1534,18 @@ def render_socioeconomic(filters: queries.FilterState) -> None:
         ),
         horizontal=True,
     )
+    support_labels = {"All": 0, "≥ 10": 10, "≥ 20": 20, "≥ 30": 30}
+    support_label = st.selectbox(
+        "Minimum full publication participation",
+        tuple(support_labels),
+        index=3,
+        key="socioeconomic_support",
+        help=(
+            "Applied to country-level socioeconomic comparisons after Country × Year "
+            "publication support is calculated; fractional weights are unchanged."
+        ),
+    )
+    minimum_support = support_labels[support_label]
 
     if navigation == "Income-level gap":
         data = numeric(
@@ -1607,7 +1612,7 @@ def render_socioeconomic(filters: queries.FilterState) -> None:
             share_figure.update_xaxes(dtick=1)
             share_figure.update_yaxes(range=[0, 100], ticksuffix="%")
             st.plotly_chart(
-                apply_figure_style(share_figure, 470),
+                place_legend_below_plot(apply_figure_style(share_figure, 470)),
                 width="stretch",
                 config={"displaylogo": False},
             )
@@ -1765,28 +1770,13 @@ def render_socioeconomic(filters: queries.FilterState) -> None:
         empty_state()
         return
     available_years = sorted(data["calendar_year"].dropna().astype(int).unique())
-    controls = st.columns((1, 1.5))
-    with controls[0]:
-        default_year = 2024 if 2024 in available_years else available_years[-1]
-        analysis_year = st.selectbox(
-            "Analysis year",
-            available_years,
-            index=available_years.index(default_year),
-            key=f"{safe_file_stem(navigation)}_analysis_year",
-        )
-    support_labels = {"All": 0, "≥ 10": 10, "≥ 20": 20, "≥ 30": 30}
-    with controls[1]:
-        support_label = st.selectbox(
-            "Minimum full publication participation",
-            tuple(support_labels),
-            index=2 if navigation == "Wealth" else 0,
-            key=f"{safe_file_stem(navigation)}_support",
-            help=(
-                "Applied after country-year publication support is calculated; "
-                "fractional weights are unchanged."
-            ),
-        )
-    minimum_support = support_labels[support_label]
+    default_year = 2024 if 2024 in available_years else available_years[-1]
+    analysis_year = st.selectbox(
+        "Analysis year",
+        available_years,
+        index=available_years.index(default_year),
+        key=f"{safe_file_stem(navigation)}_analysis_year",
+    )
     snapshot = apply_publication_support(
         data[data["calendar_year"] == analysis_year], minimum_support
     )

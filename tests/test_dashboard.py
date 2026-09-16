@@ -292,6 +292,14 @@ class DashboardQueryTests(unittest.TestCase):
         self.assertEqual(ranking["source_id"].tolist(), ["S1", "S2"])
         self.assertEqual(len(sources), 3)
 
+    def test_final_dashboard_controls_and_period_semantics(self):
+        source = (ROOT / "dashboard" / "views.py").read_text(encoding="utf-8")
+        self.assertNotIn('key="country_analysis_year"', source)
+        self.assertIn('key="normalized_analysis_year"', source)
+        self.assertIn("values = (4, 6, 8, 10, 15, 20, 30)", source)
+        self.assertIn('top_n_control("topic_top_n", default=4)', source)
+        self.assertIn('color=BLUE if method == "Full" else TEAL', source)
+
 
 @unittest.skipIf(dw_tests.psycopg is None, "psycopg is required for PostgreSQL tests")
 class DashboardDatabaseQueryTests(unittest.TestCase):
@@ -443,11 +451,14 @@ class DashboardDatabaseQueryTests(unittest.TestCase):
         self.assertIsNone(italy[18])
 
     def test_final_sessions_execute_and_temporal_empty_state(self):
-        from analysis.sessions import sessions
-        for session in sessions(queries.FilterState(start_year=2022, end_year=2023)):
-            for _, spec in session.steps:
-                with self.subTest(session=session.number):
-                    self._rows(spec)
+        session_paths = sorted((ROOT / "analysis").glob("session_*.sql"))
+        self.assertEqual(len(session_paths), 6)
+        for session_path in session_paths:
+            with self.subTest(session=session_path.name):
+                with dw_tests.psycopg.connect(
+                    self.database_url, autocommit=True
+                ) as connection:
+                    connection.execute(session_path.read_text(encoding="utf-8"))
         self.assertEqual(self._rows(queries.temporal_navigation(queries.FilterState(countries=("ZZ",)), "Quarter")), [])
         with self.assertRaises(ValueError):
             queries.temporal_navigation(queries.FilterState(), "unsafe")
@@ -514,12 +525,12 @@ class DashboardDatabaseQueryTests(unittest.TestCase):
                     if page not in {"Research Growth"}:
                         self.assertGreaterEqual(len(application.download_button), 1)
                     if page == "Geographic Leadership":
-                        analysis_year = next(
-                            selector
-                            for selector in application.selectbox
-                            if selector.label == "Analysis year"
+                        self.assertFalse(
+                            any(
+                                selector.label == "Analysis year"
+                                for selector in application.selectbox
+                            )
                         )
-                        self.assertEqual(analysis_year.value, 2023)
                         comparison = next(
                             toggle
                             for toggle in application.toggle
@@ -535,6 +546,14 @@ class DashboardDatabaseQueryTests(unittest.TestCase):
                             if selector.label == "Analysis year"
                         )
                         self.assertEqual(analysis_year.value, 2023)
+                        analysis_year.set_value(2022).run()
+                        self.assertEqual(list(application.exception), [])
+                        analysis_year = next(
+                            selector
+                            for selector in application.selectbox
+                            if selector.label == "Analysis year"
+                        )
+                        self.assertEqual(analysis_year.value, 2022)
                         support = next(
                             selector
                             for selector in application.selectbox
@@ -549,6 +568,32 @@ class DashboardDatabaseQueryTests(unittest.TestCase):
                             if radio.label == "Analytical path"
                         )
                         self.assertEqual(path.value, "Income-level gap")
+                        support = next(
+                            selector
+                            for selector in application.selectbox
+                            if selector.label
+                            == "Minimum full publication participation"
+                        )
+                        self.assertEqual(support.value, "≥ 30")
+                        path.set_value("Wealth").run()
+                        support = next(
+                            selector
+                            for selector in application.selectbox
+                            if selector.label
+                            == "Minimum full publication participation"
+                        )
+                        self.assertEqual(support.value, "≥ 30")
+                        self.assertEqual(len(application.get("plotly_chart")), 0)
+                        support.set_value("All").run()
+                        self.assertEqual(list(application.exception), [])
+                        support = next(
+                            selector
+                            for selector in application.selectbox
+                            if selector.label
+                            == "Minimum full publication participation"
+                        )
+                        self.assertEqual(support.value, "All")
+                        self.assertGreaterEqual(len(application.get("plotly_chart")), 1)
                     if page == "Topics":
                         measure = next(
                             selector
@@ -563,7 +608,8 @@ class DashboardDatabaseQueryTests(unittest.TestCase):
                             for slider in application.select_slider
                             if slider.label == "Top N"
                         )
-                        self.assertEqual(top_n.value, 8)
+                        self.assertIn("4", top_n.options)
+                        self.assertEqual(top_n.value, 4)
                     if page == "Publication Ecosystem":
                         missing_toggle = next(
                             toggle

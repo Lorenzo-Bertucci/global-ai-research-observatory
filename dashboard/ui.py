@@ -46,6 +46,22 @@ def apply_figure_style(figure: go.Figure, height: int = 410) -> go.Figure:
     return figure
 
 
+def place_legend_below_plot(figure: go.Figure) -> go.Figure:
+    """Keep a horizontal legend clear of long chart titles."""
+    figure.update_layout(
+        margin=dict(l=10, r=15, t=82, b=85),
+        legend=dict(
+            title=None,
+            orientation="h",
+            yanchor="top",
+            y=-0.16,
+            xanchor="left",
+            x=0,
+        ),
+    )
+    return figure
+
+
 def horizontal_bar(
     frame: pd.DataFrame,
     *,
